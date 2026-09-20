@@ -1,0 +1,21 @@
+{
+  "data_destination_description": "Synthetic contract destination",
+  "data_destination_id": "destination_contract",
+  "data_source_description": "Synthetic contract source",
+  "data_source_id": "source_contract",
+  "payload": {
+    "c_bool": null,
+    "c_bytea": null,
+    "c_float4": null,
+    "c_float8": null,
+    "c_int2": null,
+    "c_int4": null,
+    "c_int8": null,
+    "c_json": "{}",
+    "c_text": null,
+    "c_timestamp": null,
+    "c_timestamptz": null,
+    "id": 2,
+    "partition_key": "case-nulls"
+  }
+}

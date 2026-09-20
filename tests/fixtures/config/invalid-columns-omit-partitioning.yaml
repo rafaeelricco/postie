@@ -1,0 +1,26 @@
+data_sources:
+  - id: postgres_source
+    description: Main events store
+    type: postgres
+    host: localhost
+    port: 5432
+    username: my_user
+    password: ${SOURCE_PASSWORD}
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - event_name
+      - payload
+    serialColumn: id
+    partitioningColumn: aggregate_id
+
+data_destinations:
+  - id: plain_destination
+    description: unfiltered projection
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/my_projection
+    username: name-of-user
+    password: ${DEST_PASSWORD}
+    sources:
+      - postgres_source

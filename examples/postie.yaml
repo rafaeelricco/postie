@@ -1,0 +1,25 @@
+version: 1
+namespace: personal-platform
+environment: development
+application_config: ./examples/application.yaml
+kafka:
+  brokers: [kafka:9092]
+  partitions: 10
+  replication_factor: 1
+connect:
+  url: http://connect:8083
+operator:
+  listen: 0.0.0.0:8081
+  token_file: ""
+control:
+  database_url: ${POSTIE_DATABASE_URL}
+delivery:
+  request_timeout: 60s
+  drain_timeout: 30s
+destinations:
+  Accounts_Projection:
+    kind: projection
+    replay_endpoint: http://receiver:8080/rebuild/projections/accounts
+# sources:
+#   application_events:
+#     publication: postie_application_events_g1   # only when the capture user does not own the table

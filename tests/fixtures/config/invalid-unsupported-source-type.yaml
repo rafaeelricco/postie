@@ -1,0 +1,27 @@
+data_sources:
+  - id: mysql_source
+    description: Main events store
+    type: mysql
+    host: localhost
+    port: 3306
+    username: my_user
+    password: ${SOURCE_PASSWORD}
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - sequence_number
+      - payload
+    autoIncrementingColumn: id
+    partitioningColumn: aggregate_id
+
+data_destinations:
+  - id: plain_destination
+    description: unfiltered projection
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/my_projection
+    username: name-of-user
+    password: ${DEST_PASSWORD}
+    sources:
+      - mysql_source

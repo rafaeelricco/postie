@@ -1,0 +1,21 @@
+{
+  "data_destination_description": "Synthetic contract destination",
+  "data_destination_id": "destination_contract",
+  "data_source_description": "Synthetic contract source",
+  "data_source_id": "source_contract",
+  "payload": {
+    "c_bool": false,
+    "c_bytea": "",
+    "c_float4": null,
+    "c_float8": 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+    "c_int2": 32767,
+    "c_int4": 2147483647,
+    "c_int8": 9223372036854775807,
+    "c_json": "{\"list\":[1,2,3],\"outer\":{\"inner\":{\"deep\":true}}}",
+    "c_text": "",
+    "c_timestamp": null,
+    "c_timestamptz": null,
+    "id": 3,
+    "partition_key": "case-extreme-high"
+  }
+}

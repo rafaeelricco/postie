@@ -1,0 +1,21 @@
+{
+  "data_destination_description": "Synthetic contract destination",
+  "data_destination_id": "destination_contract",
+  "data_source_description": "Synthetic contract source",
+  "data_source_id": "source_contract",
+  "payload": {
+    "c_bool": true,
+    "c_bytea": "AP8Q",
+    "c_float4": null,
+    "c_float8": 0.1,
+    "c_int2": null,
+    "c_int4": null,
+    "c_int8": -9223372036854775808,
+    "c_json": "{\"a\":2,\"m\":3,\"z\":1}",
+    "c_text": "unicode: café 世界 \"quoted\" and a\nnewline",
+    "c_timestamp": null,
+    "c_timestamptz": null,
+    "id": 4,
+    "partition_key": "case-extreme-low"
+  }
+}

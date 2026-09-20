@@ -1,0 +1,24 @@
+data_sources:
+  - id: postgres_source
+    description: Main events store
+    type: postgres
+    host: localhost
+    port: 5432
+    username: my_user
+    password: ${SOURCE_PASSWORD}
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - payload
+    serialColumn: id
+    partitioningColumn: aggregate_id
+
+data_destinations:
+  - id: file_destination
+    description: my projection 1
+    type: file
+    path: ./temp.file
+    sources:
+      - postgres_source

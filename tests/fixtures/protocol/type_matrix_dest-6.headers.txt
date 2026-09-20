@@ -1,0 +1,3 @@
+POST /contract-destination
+Authorization: Basic Y29udHJhY3RfaHR0cF91c2VyOmNvbnRyYWN0X2h0dHBfcGFzcw==
+Content-Type: application/json

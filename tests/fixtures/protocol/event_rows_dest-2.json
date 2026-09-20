@@ -1,0 +1,18 @@
+{
+  "data_destination_description": "Synthetic contract destination",
+  "data_destination_id": "destination_contract",
+  "data_source_description": "Synthetic contract source",
+  "data_source_id": "source_contract",
+  "payload": {
+    "aggregate_id": "11111111-2222-4333-8444-555555555555",
+    "aggregate_version": 2,
+    "causation_id": "11111111-2222-4333-8444-555555555555",
+    "correlation_id": "11111111-2222-4333-8444-555555555555",
+    "event_id": "66666666-7777-4888-8999-aaaaaaaaaaaa",
+    "event_name": "EntityUpdated",
+    "id": 2,
+    "json_metadata": "{\"client_ip\":\"203.0.113.10\",\"client\":\"contract-fixture\"}",
+    "payload": "{\"verified_at\":\"2024-03-01T08:05:30Z\"}",
+    "recorded_on": "2024-03-01 08:05:30+00"
+  }
+}

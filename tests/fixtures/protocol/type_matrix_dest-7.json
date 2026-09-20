@@ -1,0 +1,21 @@
+{
+  "data_destination_description": "Synthetic contract destination",
+  "data_destination_id": "destination_contract",
+  "data_source_description": "Synthetic contract source",
+  "data_source_id": "source_contract",
+  "payload": {
+    "c_bool": true,
+    "c_bytea": "AQ==",
+    "c_float4": 1,
+    "c_float8": 1,
+    "c_int2": 1,
+    "c_int4": 1,
+    "c_int8": 1,
+    "c_json": "{\"k\":\"v\"}",
+    "c_text": "timestamp-case",
+    "c_timestamp": "2024-01-02 03:04:05.5",
+    "c_timestamptz": "2024-01-01 21:34:05.5+00",
+    "id": 8,
+    "partition_key": "case-ts-offset"
+  }
+}

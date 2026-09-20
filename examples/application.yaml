@@ -1,0 +1,32 @@
+data_sources:
+  - id: application_events
+    description: Application event store
+    type: postgres
+    host: postgres
+    port: 5432
+    username: event_capture
+    password: ${POSTIE_CAPTURE_PASSWORD}
+    database: application
+    table: event_store
+    columns:
+      [
+        id,
+        event_id,
+        event_name,
+        aggregate_id,
+        aggregate_version,
+        correlation_id,
+        causation_id,
+        recorded_on,
+        payload,
+      ]
+    serialColumn: id
+    partitioningColumn: correlation_id
+data_destinations:
+  - id: Accounts_Projection
+    description: Accounts read model
+    type: http-push
+    endpoint: http://receiver:8080/projections/accounts
+    username: event_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources: [application_events]

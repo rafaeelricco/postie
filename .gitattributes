@@ -1,0 +1,2 @@
+# The response-size regression fixture intentionally contains trailing whitespace.
+tests/regression/testdata/acks/retry__whitespace_after_limit.json -whitespace

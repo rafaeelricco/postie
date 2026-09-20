@@ -1,0 +1,58 @@
+data_sources:
+  - id: postgres_source
+    description: Main events store
+    type: postgres
+    host: localhost
+    port: 5432
+    username: my_user
+    password: ${SOURCE_PASSWORD}
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - sequence_number
+      - payload
+    serialColumn: id
+    partitioningColumn: aggregate_id
+
+  - id: secondary_source
+    description: Secondary events store
+    type: postgres
+    host: localhost
+    port: 5433
+    username: my_other_user
+    password: ${SOURCE_PASSWORD}
+    database: my_other_db
+    table: other_events_table
+    columns:
+      - id
+      - correlation_id
+      - payload
+    serialColumn: id
+    partitioningColumn: correlation_id
+
+data_destinations:
+  - id: HTTP_destination
+    description: my projection 2
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/my_projection
+    username: name-of-user
+    password: ${DEST_PASSWORD}
+    sources:
+      - postgres_source
+      - secondary_source
+
+  - id: filtered_destination
+    description: filtered projection
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/filtered_projection
+    username: name-of-user
+    password: ${DEST_PASSWORD}
+    sources:
+      - postgres_source
+    filter:
+      column: event_name
+      values:
+        - OrderCreated
+        - OrderUpdated

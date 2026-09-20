@@ -1,0 +1,5 @@
+{
+  "result": {
+    "error": { "policy": "must_retry", "class": "c", "description": "d" }
+  }
+}

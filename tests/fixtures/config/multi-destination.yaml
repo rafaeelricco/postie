@@ -1,0 +1,549 @@
+data_sources:
+  - id: source_01
+    description: Synthetic PostgreSQL event source
+    type: postgres
+    host: localhost
+    port: 5432
+    username: postie_source
+    password: ${POSTIE_CAPTURE_PASSWORD}
+    database: postie
+    table: source_events
+    columns:
+      - id
+      - event_id
+      - correlation_id
+      - sequence_number
+      - event_name
+      - payload
+      - metadata
+      - recorded_at
+    serialColumn: id
+    partitioningColumn: correlation_id
+
+data_destinations:
+  - id: destination_01
+    description: Synthetic HTTP destination 01
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/01
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_02
+    description: Synthetic HTTP destination 02
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/02
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+    filter:
+      column: event_name
+      values:
+        - EntityCreated
+        - EntityUpdated
+
+  - id: destination_03
+    description: Synthetic HTTP destination 03
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/03
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_04
+    description: Synthetic HTTP destination 04
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/04
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_05
+    description: Synthetic HTTP destination 05
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/05
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_06
+    description: Synthetic HTTP destination 06
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/06
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_07
+    description: Synthetic HTTP destination 07
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/07
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_08
+    description: Synthetic HTTP destination 08
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/08
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_09
+    description: Synthetic HTTP destination 09
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/09
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_10
+    description: Synthetic HTTP destination 10
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/10
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_11
+    description: Synthetic HTTP destination 11
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/11
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_12
+    description: Synthetic HTTP destination 12
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/12
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_13
+    description: Synthetic HTTP destination 13
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/13
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_14
+    description: Synthetic HTTP destination 14
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/14
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_15
+    description: Synthetic HTTP destination 15
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/15
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_16
+    description: Synthetic HTTP destination 16
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/16
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_17
+    description: Synthetic HTTP destination 17
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/17
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_18
+    description: Synthetic HTTP destination 18
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/18
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_19
+    description: Synthetic HTTP destination 19
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/19
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_20
+    description: Synthetic HTTP destination 20
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/20
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_21
+    description: Synthetic HTTP destination 21
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/21
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_22
+    description: Synthetic HTTP destination 22
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/22
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_23
+    description: Synthetic HTTP destination 23
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/23
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_24
+    description: Synthetic HTTP destination 24
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/24
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_25
+    description: Synthetic HTTP destination 25
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/25
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_26
+    description: Synthetic HTTP destination 26
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/26
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_27
+    description: Synthetic HTTP destination 27
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/27
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_28
+    description: Synthetic HTTP destination 28
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/28
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_29
+    description: Synthetic HTTP destination 29
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/29
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_30
+    description: Synthetic HTTP destination 30
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/30
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_31
+    description: Synthetic HTTP destination 31
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/31
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_32
+    description: Synthetic HTTP destination 32
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/32
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_33
+    description: Synthetic HTTP destination 33
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/33
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_34
+    description: Synthetic HTTP destination 34
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/34
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_35
+    description: Synthetic HTTP destination 35
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/35
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_36
+    description: Synthetic HTTP destination 36
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/36
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_37
+    description: Synthetic HTTP destination 37
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/37
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_38
+    description: Synthetic HTTP destination 38
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/38
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_39
+    description: Synthetic HTTP destination 39
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/39
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_40
+    description: Synthetic HTTP destination 40
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/40
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_41
+    description: Synthetic HTTP destination 41
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/41
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_42
+    description: Synthetic HTTP destination 42
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/42
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_43
+    description: Synthetic HTTP destination 43
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/43
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_44
+    description: Synthetic HTTP destination 44
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/44
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_45
+    description: Synthetic HTTP destination 45
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/45
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_46
+    description: Synthetic HTTP destination 46
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/46
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_47
+    description: Synthetic HTTP destination 47
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/47
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_48
+    description: Synthetic HTTP destination 48
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/48
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_49
+    description: Synthetic HTTP destination 49
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/49
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_50
+    description: Synthetic HTTP destination 50
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/50
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_51
+    description: Synthetic HTTP destination 51
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/51
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_52
+    description: Synthetic HTTP destination 52
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/52
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_53
+    description: Synthetic HTTP destination 53
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/53
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_54
+    description: Synthetic HTTP destination 54
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/54
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_55
+    description: Synthetic HTTP destination 55
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/55
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_56
+    description: Synthetic HTTP destination 56
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/56
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_57
+    description: Synthetic HTTP destination 57
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/57
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01
+
+  - id: destination_58
+    description: Synthetic HTTP destination 58
+    type: http-push
+    endpoint: http://receiver.example.invalid:8080/api/destinations/58
+    username: postie_delivery
+    password: ${POSTIE_DELIVERY_PASSWORD}
+    sources:
+      - source_01

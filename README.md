@@ -126,13 +126,13 @@ make lint test
 
 Use the focused suites when changing a specific contract:
 
-| Change area | Checks |
-| --- | --- |
-| Protocol formatting or filtering | `make contract fuzz` |
-| User-visible behavior | `make bdd` |
-| A fixed regression | `make regression` |
-| Package boundaries | `make architecture` |
-| Capture, workers, or control state | `make integration` |
+| Change area                        | Checks               |
+| ---------------------------------- | -------------------- |
+| Protocol formatting or filtering   | `make contract fuzz` |
+| User-visible behavior              | `make bdd`           |
+| A fixed regression                 | `make regression`    |
+| Package boundaries                 | `make architecture`  |
+| Capture, workers, or control state | `make integration`   |
 
 The integration suite uses its own `postie-integration` Compose project and
 ports 25432, 25433, 39092, and 28083. It can run beside the development stack;

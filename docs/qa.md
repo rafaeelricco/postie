@@ -2,18 +2,18 @@
 
 ## Checks
 
-| Check | Command | Covers |
-| --- | --- | --- |
-| Lint and unit tests | `make lint test` | Formatting, `go vet`, race-enabled tests. |
-| Behavior scenarios | `make bdd` | Gherkin contracts in `tests/bdd/features`. |
-| HTTP protocol | `make contract` | Synthetic protocol fixtures and the delivery path. |
-| Regressions | `make regression` | Acknowledgement cases and fixed regressions. |
-| Package boundaries | `make architecture` | Allowed dependency direction. |
-| Coverage | `make cover` | Coverage for gated packages; default floor is 90%. |
-| Mutation checks | `make mutation` | Mutation efficacy for gated packages; default floor is 90%. |
-| Full quality set | `make quality` | Lint, coverage, and mutation checks. |
-| Integration | `make integration` | PostgreSQL, Kafka, Kafka Connect, and HTTP delivery. |
-| Fuzzing | `make fuzz` | Acknowledgements, filters, and Debezium decoding. |
+| Check               | Command             | Covers                                                      |
+| ------------------- | ------------------- | ----------------------------------------------------------- |
+| Lint and unit tests | `make lint test`    | Formatting, `go vet`, race-enabled tests.                   |
+| Behavior scenarios  | `make bdd`          | Scenario subtests in `tests/bdd`.                           |
+| HTTP protocol       | `make contract`     | Synthetic protocol fixtures and the delivery path.          |
+| Regressions         | `make regression`   | Acknowledgement cases and fixed regressions.                |
+| Package boundaries  | `make architecture` | Allowed dependency direction and direct modules.            |
+| Coverage            | `make cover`        | Coverage for gated packages; default floor is 90%.          |
+| Mutation checks     | `make mutation`     | Mutation efficacy for gated packages; default floor is 90%. |
+| Full quality set    | `make quality`      | Lint, coverage, and mutation checks.                        |
+| Integration         | `make integration`  | PostgreSQL, Kafka, Kafka Connect, and HTTP delivery.        |
+| Fuzzing             | `make fuzz`         | Acknowledgements, filters, and Debezium decoding.           |
 
 The gated packages are `internal/{config,stream,protocol,provision,delivery,control,activity}` and
 `internal/adapters/{operator,httpdelivery,debezium}`. Kafka, control database,
@@ -24,14 +24,28 @@ behavior. `internal/app` composes adapters without owning business rules.
 
 Unit tests for a package live beside its Go implementation and run with `make
 test`. Fuzz tests cover untrusted protocol values and Debezium decoding; they
-run with `make fuzz`. Feature tests in `tests/bdd/features` cover user-visible
+run with `make fuzz`. Scenario tests in `tests/bdd` cover user-visible
 behavior and run with `make bdd`. Contract tests in `tests/contract` compare the
 synthetic examples in `tests/fixtures/protocol` with the full decode, format,
 and HTTP path; they run with `make contract`. Regression tests in
 `tests/regression` cover the acknowledgement corpus and fixed bugs. The
-architecture suite rejects forbidden package dependencies. Integration tests
-use the Compose stack in `tests/integration` for behavior that needs real
-PostgreSQL, Kafka, or Kafka Connect services.
+architecture suite rejects forbidden package dependencies and any direct module
+outside its allowlist. Integration tests use the Compose stack in
+`tests/integration` for behavior that needs real PostgreSQL, Kafka, or Kafka
+Connect services.
+
+A scenario is one `t.Run` subtest in `tests/bdd`, named as the sentence a user
+would say ("keep_going is a terminal skip"). It builds its own world with
+`newConfigWorld`, `newDeliveryWorld` or `newOperatorWorld`, then calls that
+world's steps in given, when, then order. Variations of one behavior are rows of
+a table inside one subtest. Name the specification section above the Test
+function, never a line number. A behavior the specification states for users
+needs a scenario even when a unit test already pins it.
+
+Tests use the standard library only. A new direct module fails `make
+architecture` until it is added to `allowedModules` in
+`tests/architecture/modules_test.go`, in the same change, with the reason in the
+commit message.
 
 For a new bug, add a failing regression case before changing the implementation.
 Acknowledgement cases belong in `tests/regression/testdata/acks` using the

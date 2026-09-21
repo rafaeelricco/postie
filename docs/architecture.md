@@ -25,17 +25,17 @@ flowchart TD
 
 ## Package boundaries
 
-| Package | Responsibility |
-| --- | --- |
-| `internal/app` | Builds adapters, maps configuration, starts workers and the operator API, and closes resources. |
-| `internal/config` | Loads and validates YAML, applies defaults and environment substitution, and handles secrets. |
-| `internal/stream` | Defines sources, generations, immutable stream identities, capture names, and decoded records. |
-| `internal/provision` | Validates source table contracts and provisions topics, connectors, slots, and publications. |
-| `internal/control` | Tracks desired subscriptions, worker observations, leases, readiness, and blocked streams. |
-| `internal/delivery` | Applies filters, retries, acknowledgements, durable skips, and ordered commits. |
-| `internal/protocol` | Formats the HTTP envelope and converts PostgreSQL values; decodes acknowledgements and filters. |
-| `internal/adapters` | Implements PostgreSQL, Kafka, Debezium Connect, HTTP delivery, and the operator API. |
-| `internal/activity` | Provides bounded structured activity and cursor-based reads. |
+| Package              | Responsibility                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `internal/app`       | Builds adapters, maps configuration, starts workers and the operator API, and closes resources. |
+| `internal/config`    | Loads and validates YAML, applies defaults and environment substitution, and handles secrets.   |
+| `internal/stream`    | Defines sources, generations, immutable stream identities, capture names, and decoded records.  |
+| `internal/provision` | Validates source table contracts and provisions topics, connectors, slots, and publications.    |
+| `internal/control`   | Tracks desired subscriptions, worker observations, leases, readiness, and blocked streams.      |
+| `internal/delivery`  | Applies filters, retries, acknowledgements, durable skips, and ordered commits.                 |
+| `internal/protocol`  | Formats the HTTP envelope and converts PostgreSQL values; decodes acknowledgements and filters. |
+| `internal/adapters`  | Implements PostgreSQL, Kafka, Debezium Connect, HTTP delivery, and the operator API.            |
+| `internal/activity`  | Provides bounded structured activity and cursor-based reads.                                    |
 
 Core packages depend on interfaces rather than database, broker, or HTTP
 clients. The architecture check in `make architecture` guards those dependency

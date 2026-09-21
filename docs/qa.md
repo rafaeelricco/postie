@@ -112,3 +112,12 @@ Stop the development stack when finished:
 ```sh
 docker compose --profile postie down
 ```
+
+## Continuous integration and releases
+
+Every pull request runs `make lint cover`, `make integration`, and a
+multi-architecture image build. Merging a pull request into `main` runs the
+same checks on the merge commit, then tags the next version, creates the
+GitHub Release, and pushes `ghcr.io/rafaeelricco/postie`. The version bump is
+a patch unless the pull request carries the `release:minor` or
+`release:major` label. Direct pushes to `main` do not release.

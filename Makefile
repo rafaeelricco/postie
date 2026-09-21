@@ -8,7 +8,7 @@ comma       := ,
 empty       :=
 space       := $(empty) $(empty)
 
-.PHONY: lint test bdd contract regression architecture fuzz cover mutation integration quality
+.PHONY: lint test unit bdd contract regression architecture fuzz cover mutation integration quality
 
 lint:
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -17,6 +17,9 @@ lint:
 
 test:
 	$(GO) test -count=1 -race ./...
+
+unit:
+	$(GO) test -count=1 ./tests/unit/... ./internal/... ./cmd/...
 
 bdd:
 	$(GO) test -count=1 ./tests/bdd
@@ -31,10 +34,9 @@ regression:
 	$(GO) test -count=1 ./tests/regression
 
 fuzz:
-	$(GO) test -run='^$$' -fuzz=FuzzDecodeAcknowledgement -fuzztime=$(FUZZTIME) ./internal/protocol
-	$(GO) test -run='^$$' -fuzz=FuzzMatchesFilter -fuzztime=$(FUZZTIME) ./internal/protocol
-
-	$(GO) test -run='^$$' -fuzz=FuzzDecode -fuzztime=$(FUZZTIME) ./internal/adapters/debezium
+	$(GO) test -run='^$$' -fuzz=FuzzDecodeAcknowledgement -fuzztime=$(FUZZTIME) ./tests/unit/protocol
+	$(GO) test -run='^$$' -fuzz=FuzzMatchesFilter -fuzztime=$(FUZZTIME) ./tests/unit/protocol
+	$(GO) test -run='^$$' -fuzz=FuzzDecode -fuzztime=$(FUZZTIME) ./tests/unit/adapters/debezium
 
 # Unit, BDD, contract and regression tests all count toward the gated packages.
 cover:
@@ -47,10 +49,13 @@ cover:
 # gremlins exits 0 with nothing killed. So: cold cache, a generous coefficient,
 # and a run that killed nothing fails instead of passing. Gremlins v0.6.0 also
 # exits 0 below --threshold-efficacy, so the floor is enforced here.
+# Black-box unit tests live in tests/unit, outside the mutated package, so each
+# mutant runs the whole offline suite (--integration) and coverage is attributed
+# across packages (--coverpkg).
 mutation:
 	@$(GO) clean -testcache
 	@for p in $(GATED:/...=); do \
-		out=$$($(GREMLINS) unleash --timeout-coefficient 10 $$p 2>&1) || { echo "$$out"; exit 1; }; \
+		out=$$($(GREMLINS) unleash --integration --coverpkg=$$p/... --timeout-coefficient 10 $$p 2>&1) || { echo "$$out"; exit 1; }; \
 		echo "$$out"; \
 		if echo "$$out" | grep -q 'Killed: 0,'; then echo "mutation: nothing was killed in $$p, so this run proves nothing"; exit 1; fi; \
 		echo "$$out" | awk -v min=$(MUTATE_MIN) -v p=$$p '/^Test efficacy:/ { sub("%","",$$3); seen=1; \

@@ -11,6 +11,26 @@ import (
 	"github.com/rafaeelricco/postie/internal/stream"
 )
 
+type fakeSender struct {
+	calls   int
+	bodies  [][]byte
+	errs    []error
+	outcome Outcome
+}
+
+func (s *fakeSender) Send(_ context.Context, _ stream.Record, body []byte) (Outcome, error) {
+	s.calls++
+	s.bodies = append(s.bodies, append([]byte(nil), body...))
+	if len(s.errs) > 0 {
+		err := s.errs[0]
+		s.errs = s.errs[1:]
+		if err != nil {
+			return 0, err
+		}
+	}
+	return s.outcome, nil
+}
+
 func TestProcessSendsEnvelope(t *testing.T) {
 	sender := &fakeSender{outcome: Delivered}
 	p := NewProcessor(Destination{ID: "projection", Description: "projection"}, sender)

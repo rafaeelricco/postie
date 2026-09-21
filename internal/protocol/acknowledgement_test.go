@@ -12,7 +12,8 @@ func TestAcknowledgements(t *testing.T) {
 		{`{"result":{"error":{"policy":"must_retry","class":"c","description":"d"}}}`, Retry, false},
 		{`{"result":{"error":{"policy":"keep_going","class":"c","description":"d"}}}`, KeepGoing, false},
 		{`{"result":{"success":null}}`, Retry, true},
-		{`{"result":{"error":{"policy":"keep_going"}}}`, Retry, true}, // class/description missing
+		{`{"result":{"error":{"policy":"keep_going"}}}`, Retry, true},                             // class/description missing
+		{`{"result":{"error":{"policy":"surprise","class":"c","description":"d"}}}`, Retry, true}, // unknown policy
 		{`{"result":{"success":{},"error":{"policy":"must_retry","class":"c","description":"d"}}}`, Success, false},
 		{`{"result":{}}`, Retry, true},
 		{``, Retry, true},

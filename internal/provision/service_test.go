@@ -158,6 +158,10 @@ func serviceIdentity(src stream.Source, partitions int32) stream.Identity {
 	}
 }
 
+func testSource() stream.Source {
+	return stream.Source{ID: "orders", Description: "orders db", Table: "event_store", Columns: []string{"id", "correlation_id", "payload"}, SerialColumn: "id", PartitioningColumn: "correlation_id"}
+}
+
 func newProvisionService(t *testing.T) (*Service, stream.Source, *serviceSourceFake, *serviceTopicsFake, *serviceConnectorsFake, *serviceStoreFake) {
 	t.Helper()
 	source := testSource()

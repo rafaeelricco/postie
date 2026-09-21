@@ -5,6 +5,7 @@
 | Check               | Command             | Covers                                                      |
 | ------------------- | ------------------- | ----------------------------------------------------------- |
 | Lint and unit tests | `make lint test`    | Formatting, `go vet`, race-enabled tests.                   |
+| Unit tests only     | `make unit`         | `tests/unit` plus the tests kept beside their packages.     |
 | Behavior scenarios  | `make bdd`          | Scenario subtests in `tests/bdd`.                           |
 | HTTP protocol       | `make contract`     | Synthetic protocol fixtures and the delivery path.          |
 | Regressions         | `make regression`   | Acknowledgement cases and fixed regressions.                |
@@ -22,8 +23,11 @@ behavior. `internal/app` composes adapters without owning business rules.
 
 ## Where tests belong
 
-Unit tests for a package live beside its Go implementation and run with `make
-test`. Fuzz tests cover untrusted protocol values and Debezium decoding; they
+Unit tests that use only a package's exported API live in `tests/unit`, under
+the same path the package has under `internal/`. Tests that need unexported
+identifiers stay beside the implementation, as does `cmd/postiectl`'s test.
+Both run with `make test`, or alone with `make unit`. Fuzz tests cover
+untrusted protocol values and Debezium decoding; they live in `tests/unit` and
 run with `make fuzz`. Scenario tests in `tests/bdd` cover user-visible
 behavior and run with `make bdd`. Contract tests in `tests/contract` compare the
 synthetic examples in `tests/fixtures/protocol` with the full decode, format,

@@ -1,12 +1,24 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
+// Filter keeps only records whose Column holds one of Values.
 type Filter struct {
 	Column string
 	Values []string
 }
 
+// MatchesFilter reports whether a payload should be delivered. It fails open:
+// no filter, an unreadable payload, or a non-string column all match, because
+// dropping a record silently is worse than delivering one too many.
+//
+//	f := &Filter{Column: "tenant", Values: []string{"acme"}}
+//	MatchesFilter(f, []byte(`{"tenant":"acme"}`))  // true
+//	MatchesFilter(f, []byte(`{"tenant":"other"}`)) // false
+//	MatchesFilter(f, []byte(`{"tenant":7}`))       // true
 func MatchesFilter(filter *Filter, payload json.RawMessage) bool {
 	if filter == nil {
 		return true
@@ -19,10 +31,5 @@ func MatchesFilter(filter *Filter, payload json.RawMessage) bool {
 	if !ok {
 		return true
 	}
-	for _, allowed := range filter.Values {
-		if value == allowed {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(filter.Values, value)
 }

@@ -3,14 +3,20 @@ package app
 import (
 	"context"
 	"errors"
-	"github.com/rafaeelricco/postie/internal/adapters/operator"
-	"github.com/rafaeelricco/postie/internal/config"
-	"github.com/rafaeelricco/postie/internal/stream"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/rafaeelricco/postie/internal/adapters/operator"
+	"github.com/rafaeelricco/postie/internal/config"
+	"github.com/rafaeelricco/postie/internal/stream"
 )
 
+// Run starts an engine under a bounded startup timeout, then serves the
+// operator API until ctx is canceled or the server itself fails. On
+// shutdown the worker is stopped before the HTTP server is drained, so no
+// in-flight delivery is cut short by the server closing first.
+// http.ErrServerClosed from a clean Shutdown is reported as a nil error.
 func Run(ctx context.Context, engine config.Engine, application config.Application, token string, generation stream.Generation) error {
 	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	r, err := New(initCtx, engine, application, generation, os.Stdout)
@@ -19,7 +25,6 @@ func Run(ctx context.Context, engine config.Engine, application config.Applicati
 		return err
 	}
 	defer r.Close()
-	// The process log and the operator log are the same structured entries.
 	workerCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	done := make(chan struct{})

@@ -10,6 +10,10 @@ import (
 	"github.com/rafaeelricco/postie/internal/stream"
 )
 
+// InspectTable connects to the source and reports whether c.Source.Table
+// exists in the public schema, its columns and their nullability, and
+// whether c.Source.SerialColumn has a single-column unique or primary key
+// index. It is read-only and opens and closes its own connection each call.
 func (c Client) InspectTable(ctx context.Context) (provision.TableFacts, error) {
 	conn, err := pgx.Connect(ctx, connString(c.Connection))
 	if err != nil {

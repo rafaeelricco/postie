@@ -13,6 +13,8 @@ import (
 	"github.com/rafaeelricco/postie/internal/stream"
 )
 
+// Destination is one HTTP endpoint Postie delivers records to, with the
+// basic-auth credentials sent on every request.
 type Destination struct {
 	ID       string
 	Endpoint string
@@ -20,11 +22,14 @@ type Destination struct {
 	Password string
 }
 
+// Client sends records to one Destination over HTTP.
 type Client struct {
 	HTTP        *http.Client
 	Destination Destination
 }
 
+// NewClient builds a Client for destination. If client is nil, a default
+// *http.Client with a 60-second timeout is used.
 func NewClient(client *http.Client, destination Destination) *Client {
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
@@ -32,6 +37,10 @@ func NewClient(client *http.Client, destination Destination) *Client {
 	return &Client{HTTP: client, Destination: destination}
 }
 
+// Send POSTs body to the destination for record. Redirects are not followed:
+// the first redirect response is returned as-is. The response body is capped
+// at 64 KiB; a body over that limit is an error. The status code and body are
+// then classified into a delivery.Outcome.
 func (c *Client) Send(ctx context.Context, record stream.Record, body []byte) (delivery.Outcome, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Destination.Endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -77,6 +86,8 @@ func classify(statusCode int, body []byte) (delivery.Outcome, error) {
 	}
 }
 
+// Gate reports whether a source's lease still permits an HTTP attempt to
+// start, and the deadline that lease is good until.
 type Gate interface {
 	Allowed(string) bool
 	LeaseDeadline() time.Time
@@ -91,6 +102,10 @@ type LeaseTransport struct {
 	Base   http.RoundTripper
 }
 
+// RoundTrip refuses to start a request once Gate no longer allows Source, and
+// otherwise bounds the request's context by the lease deadline observed at
+// the start of the attempt, canceling that context when the response body is
+// closed.
 func (t LeaseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.Gate != nil && !t.Gate.Allowed(t.Source) {
 		return nil, context.Canceled

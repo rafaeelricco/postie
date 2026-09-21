@@ -81,8 +81,10 @@ as the Kafka message key and takes an ascending snapshot before following WAL.
 
 ## Tests and repository paths
 
-Unit and fuzz tests live beside their implementation. Behavior scenarios are
-under `tests/bdd`. `tests/contract` covers the HTTP envelope and delivery path,
+Unit and fuzz tests that use only exported API live under `tests/unit`,
+mirroring `internal/`; tests that reach unexported identifiers stay beside
+their implementation. Behavior scenarios are under `tests/bdd`.
+`tests/contract` covers the HTTP envelope and delivery path,
 `tests/regression` pins acknowledgement behavior and fixed regressions, and
 `tests/architecture` checks dependency rules. Integration tests use real
 PostgreSQL, Kafka, and Debezium through `tests/integration/compose.yaml` with the
@@ -110,6 +112,7 @@ internal/
   delivery/ protocol/        delivery rules and wire contract
   provision/ stream/         capture and event identity
 tests/
+  unit/                      black-box unit and fuzz tests, mirroring internal/
   bdd/ contract/ integration/ regression/ architecture/
   fixtures/protocol/         reviewed synthetic protocol examples
   fixtures/config/           configuration examples

@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 
 	"github.com/rafaeelricco/postie/internal/provision"
 )
 
+// connectStatus is the Kafka Connect status response for one connector,
+// decoded before statusFrom reduces it to provision.Status.
 type connectStatus struct {
 	Connector struct {
 		State provision.ConnectorState `json:"state"`
@@ -22,6 +22,8 @@ type connectStatus struct {
 	} `json:"tasks"`
 }
 
+// statusFrom reduces a raw Connect status to provision.Status: failed if the
+// connector or any task reports StateFailed, with the first non-empty trace.
 func statusFrom(raw connectStatus) provision.Status {
 	status := provision.Status{Connector: raw.Connector.State}
 	failed := raw.Connector.State == provision.StateFailed
@@ -40,22 +42,19 @@ func statusFrom(raw connectStatus) provision.Status {
 	return status
 }
 
+// ConnectorStatus fetches and reduces the status of this client's connector
+// named name.
 func (c Client) ConnectorStatus(ctx context.Context, name string) (provision.Status, error) {
 	return ConnectorStatus(ctx, c.HTTP, c.URL, name)
 }
 
 // ConnectorStatus fetches the status of one connector.
 func ConnectorStatus(ctx context.Context, client *http.Client, connectURL, name string) (provision.Status, error) {
-	endpoint := strings.TrimRight(connectURL, "/") + "/connectors/" + name + "/status"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, connectorURL(connectURL, name, "status"), nil)
 	if err != nil {
 		return provision.Status{}, fmt.Errorf("capture: build status request for %q: %w", name, err)
 	}
-	httpClient := client
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := do(client, req)
 	if err != nil {
 		return provision.Status{}, fmt.Errorf("capture: get connector status for %q: %w", name, err)
 	}
@@ -64,8 +63,7 @@ func ConnectorStatus(ctx context.Context, client *http.Client, connectURL, name 
 		return provision.Status{}, provision.ErrConnectorMissing
 	}
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return provision.Status{}, fmt.Errorf("capture: connect returned %d for connector %q status: %s", resp.StatusCode, name, string(respBody))
+		return provision.Status{}, fmt.Errorf("capture: connect returned %d for connector %q status: %s", resp.StatusCode, name, errorBody(resp))
 	}
 	var raw connectStatus
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {

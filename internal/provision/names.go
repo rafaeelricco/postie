@@ -9,8 +9,19 @@ import (
 	"github.com/rafaeelricco/postie/internal/stream"
 )
 
-// NamesFor preserves the current persisted naming scheme for each stream generation.
+// NamesFor derives every resource name of one stream generation. The names
+// are persisted and compared on every health check, so this scheme must never
+// change for an existing generation.
+//
+// The hash covers namespace, environment, source ID, and generation, which
+// keeps distinct streams from colliding on a shared Kafka or PostgreSQL.
+//
+//	n := NamesFor("acme", "production", src, 2)
+//	n.TopicPrefix // postie_g2_<28 hex chars>
+//	n.Topic       // postie_g2_<28 hex chars>.public.<table>
+//	n.Slot        // postie_g2_<28 hex chars>_slot
 func NamesFor(namespace, environment string, src stream.Source, generation stream.Generation) stream.Names {
+	// A JSON array is an unambiguous encoding: ("a", "bc") never hashes like ("ab", "c").
 	identity, _ := json.Marshal([4]string{
 		namespace, environment, src.ID, generation.String(),
 	})

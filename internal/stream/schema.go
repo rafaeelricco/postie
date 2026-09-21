@@ -23,3 +23,21 @@ const (
 	PGTimestamptz PGType = "timestamptz"
 	PGText        PGType = "text"
 )
+
+// Supported reports whether Postie can capture and convert a column of this
+// type. Provisioning and decoding both ask here, so the two can never disagree
+// about which tables are acceptable.
+//
+//	stream.PGJSON.Supported()         // true
+//	stream.PGType("uuid").Supported() // false
+func (t PGType) Supported() bool {
+	switch t {
+	case PGInt2, PGInt4, PGInt8, PGFloat4, PGFloat8, PGBool, PGJSON, PGBytea, PGTimestamp, PGTimestamptz, PGText:
+		return true
+	default:
+		return false
+	}
+}
+
+// Integer reports whether the type can order rows as a serial column.
+func (t PGType) Integer() bool { return t == PGInt2 || t == PGInt4 || t == PGInt8 }

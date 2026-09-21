@@ -3,8 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/rafaeelricco/postie/internal/config"
 	"io"
+
+	"github.com/rafaeelricco/postie/internal/config"
 )
 
 func runConfigValidate(args []string, stdout, stderr io.Writer) int {
@@ -15,12 +16,7 @@ func runConfigValidate(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	engine, err := config.LoadEngine(*path)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	app, err := config.LoadApplication(engine.ApplicationConfig)
+	_, app, err := config.Load(*path)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

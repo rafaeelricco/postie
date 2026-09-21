@@ -3,8 +3,9 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"github.com/twmb/franz-go/pkg/kgo"
 	"time"
+
+	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 func (w *partitionWorker) initialize() error {
@@ -59,6 +60,7 @@ func (w *partitionWorker) initialize() error {
 		return c.store.MarkPartitionStarted(ctx, c.scope, c.destination, w.key.topic, w.key.partition)
 	})
 }
+
 func (w *partitionWorker) commit(ctx context.Context, record *kgo.Record) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

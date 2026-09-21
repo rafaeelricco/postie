@@ -106,7 +106,14 @@ reads recent activity. The routes are in
 ## Use the published image
 
 Every pull request merged into `main` publishes a release for `linux/amd64`
-and `linux/arm64`:
+and `linux/arm64`.
+
+The first publication creates a private GHCR package. After that release,
+the maintainer must open the `postie` package's **Package settings**, choose
+**Change visibility** under **Danger Zone**, and select **Public**.
+This one-time setup enables the anonymous pull and Compose examples below.
+
+Once the package is public:
 
 ```bash
 docker pull ghcr.io/rafaeelricco/postie:latest

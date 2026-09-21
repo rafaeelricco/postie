@@ -55,10 +55,10 @@ boundaries.
    commits. It preserves the source topic, partition, offset, and leader epoch
    when creating a stream record.
 4. A delivery worker processes each partition sequentially. It decodes the
-   record, checks for an existing durable skip, formats the request, retries
-   until a terminal outcome, persists a terminal skip when needed, and commits
-   the offset. A crash after acknowledgement and before commit can redeliver
-   the event, so receivers must deduplicate.
+   record, checks for an existing durable skip, and formats the request. It
+   then retries until a terminal outcome, persists a terminal skip when needed,
+   and commits the offset. A crash after acknowledgement and before commit can
+   redeliver the event, so receivers must deduplicate.
 5. HTTP requests are fenced by the current dispatch lease. Revocation cancels
    in-flight requests and prevents late commits. One blocked partition does not
    stop delivery on other partitions.
@@ -75,15 +75,15 @@ subscription revisions, worker observations, leases, and terminal skips.
 
 Capture topic, connector, slot, and publication names use the `postie_`
 prefix and include the generation plus a hash of the namespace, environment,
-source ID, and generation. This avoids collisions between distinct stream
-identities. Connector configuration uses the configured partitioning column
+source ID, and generation. The hash keeps distinct stream identities from
+colliding. Connector configuration uses the configured partitioning column
 as the Kafka message key and takes an ascending snapshot before following WAL.
 
 ## Tests and repository paths
 
 Unit and fuzz tests live beside their implementation. Behavior scenarios are
-under `tests/bdd`; `tests/contract` covers the HTTP envelope and delivery path;
-`tests/regression` pins acknowledgement behavior and fixed regressions;
+under `tests/bdd`. `tests/contract` covers the HTTP envelope and delivery path,
+`tests/regression` pins acknowledgement behavior and fixed regressions, and
 `tests/architecture` checks dependency rules. Integration tests use real
 PostgreSQL, Kafka, and Debezium through `tests/integration/compose.yaml` with the
 `postie-integration` project on ports 25432, 25433, 39092, and 28083.

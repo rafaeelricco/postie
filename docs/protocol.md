@@ -25,10 +25,10 @@ Basic authentication from the destination's configured `username` and
 }
 ```
 
-`payload` contains the configured source columns as JSON fields. The example
-shows a string containing JSON text: a PostgreSQL `text` value remains a JSON
-string and is not parsed as an object. JSON object key order is not part of the
-contract.
+`payload` contains the configured source columns as JSON fields. In the example,
+the inner `payload` field is a string that holds JSON text. A PostgreSQL `text`
+value stays a JSON string; Postie does not parse it as an object. JSON object
+key order is not part of the contract.
 
 Postie adds these diagnostic headers:
 
@@ -43,8 +43,8 @@ Postie adds these diagnostic headers:
 | `Idempotency-Key`              | Event identifier, destination ID, and generation joined with colons.                                                              |
 
 The request timeout defaults to 60 seconds. Postie does not follow redirects.
-Any non-2xx status is retryable. A response body larger than 64 KiB is rejected;
-exactly 64 KiB is allowed through acknowledgement decoding.
+Any non-2xx status is retryable. A response body larger than 64 KiB is rejected.
+A body of exactly 64 KiB still goes through acknowledgement decoding.
 
 ## Acknowledgements
 
@@ -76,9 +76,9 @@ retry. If both a valid `success` and an error are present, success takes
 precedence.
 
 Empty or malformed bodies, unknown result shapes, non-2xx responses, timeouts,
-and connection failures retry with jittered exponential backoff from 1 to 60
-seconds, until delivery is cancelled. A `keep_going` skip is saved before its
-offset is committed.
+and connection failures all retry. Retries use jittered exponential backoff from
+1 to 60 seconds and continue until delivery is cancelled. A `keep_going` skip is
+saved before its offset is committed.
 
 ## Filters
 
@@ -114,5 +114,5 @@ validation instead of producing a guessed conversion.
 
 `tests/fixtures/protocol` contains reviewed synthetic request bodies and headers
 used by `tests/contract/envelope_test.go`. The suite compares the envelope and
-HTTP behavior to the contract; the fixtures are not generated from a separate
+HTTP behavior to the contract. The fixtures are not generated from a separate
 service or a live destination.

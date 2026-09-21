@@ -53,7 +53,7 @@ Acknowledgement cases belong in `tests/regression/testdata/acks` using the
 belong in `tests/regression`.
 
 When a new package can be tested offline, add it to `GATED` in the Makefile in
-the same change. This keeps coverage and mutation checks current.
+the same change, so coverage and mutation checks stay current.
 
 ## Manual local check
 

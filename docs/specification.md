@@ -35,13 +35,13 @@ The capture user needs logical replication access and permission to read the
 table. By default, Debezium manages a filtered publication, which requires the
 capture user to own the table. For a non-owner capture user, the table owner
 must create a publication and `sources.<source-id>.publication` in
-`examples/postie.yaml` must name it. This selects the externally managed
-publication mode.
+`examples/postie.yaml` must name it. Naming it there selects the externally
+managed publication mode.
 
 A stream generation freezes its table identity, configured columns, key,
 partition count, and capture resource names. Changing the frozen identity
-requires a new generation. Topics use delete-only retention so event history is
-available for normal delivery; topic compaction is not used.
+requires a new generation. Topics use delete-only retention, so event history
+stays available for normal delivery. Topic compaction is not used.
 
 ## Configuration
 
@@ -67,8 +67,8 @@ configure `operator.token_file`. The Compose environment also uses
 
 ## HTTP delivery
 
-Each request is a Basic-authenticated JSON `POST` containing a Postie envelope
-with the established keys `data_source_id`, `data_source_description`,
+Each request is a Basic-authenticated JSON `POST` containing a Postie envelope.
+The envelope has the established keys `data_source_id`, `data_source_description`,
 `data_destination_id`, `data_destination_description`, and `payload`. The
 `payload` value is the configured source row as a JSON object. The diagnostic
 headers use the `X-Postie-*` prefix and include event ID, delivery generation,
@@ -82,7 +82,7 @@ with policy `must_retry` requests a retry. Policy `keep_going`, with `class` and
 Kafka offset. A valid success takes precedence if both recognized outcomes are
 present. Unknown policies, malformed or empty bodies, non-2xx responses,
 timeouts, and connection failures retry. Redirects are not followed. Responses
-larger than 64 KiB retry; a response exactly 64 KiB can be evaluated. The
+larger than 64 KiB retry. A response of exactly 64 KiB is still evaluated. The
 default request timeout is 60 seconds.
 
 Filters compare a configured string field in the JSON payload. A matching value
@@ -130,9 +130,9 @@ operator API or runtime guarantee.
 Only projection destinations with a configured replay target are eligible for
 replay. A replay uses an independent Kafka consumer group and cannot change
 normal delivery offsets. Creation validates the stream identity and retained
-history, records starting offsets and exclusive per-partition boundaries,
-stores the configuration revision and a declaration that the target starts
-fresh, then begins dispatch.
+history, then records starting offsets and exclusive per-partition boundaries.
+It also stores the configuration revision and a declaration that the target
+starts fresh. Dispatch begins after that.
 
 A bounded replay stops at its recorded boundaries. A follow replay continues
 after reaching those initial boundaries. Planned lifecycle states are `created`,
@@ -149,8 +149,8 @@ multi-partition cutover while writes continue.
 
 The development Compose project is named `postie`; its API and workers run
 under the `postie` profile. Kafka Connect uses the `postie-connect` group
-and topic names. Control-state tables use the `postie_` prefix, and capture
-resources use a `postie_` prefix.
+and topic names. Control-state tables and capture resources both use the
+`postie_` prefix.
 
 Integration tests use the isolated Compose project `postie-integration` on
 ports 25432, 25433, 39092, and 28083. Set `POSTIE_KEEP=1` to retain its

@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// RenewLease upserts the worker's lease so it expires ttl from now. Calling
+// it again before expiry extends the same lease; it never fails because a
+// lease already exists.
 func (s *Store) RenewLease(ctx context.Context, scope streams.Scope, workerID string, ttl time.Duration) error {
 	if err := validScope(scope); err != nil {
 		return err
@@ -26,10 +29,8 @@ func (s *Store) RenewLease(ctx context.Context, scope streams.Scope, workerID st
 	return nil
 }
 
-// ObserveSubscription records the state a worker has reached for a desired
-// subscription revision. The observation is kept separately from the lease so
-// a newly joined worker cannot count as ready until it has observed the state.
-
+// ReleaseLease removes a worker lease and all of that worker's observations in
+// one transaction, so a released worker cannot block a future convergence.
 func (s *Store) ReleaseLease(ctx context.Context, scope streams.Scope, workerID string) error {
 	if err := validScope(scope); err != nil {
 		return err

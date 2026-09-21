@@ -12,6 +12,15 @@ import (
 	"github.com/rafaeelricco/postie/internal/stream"
 )
 
+// Decode turns one raw Debezium record into the stream.Record Postie delivers.
+// It performs no I/O: the same inputs always give the same record or error.
+//
+// Only inserts ("c") and snapshot reads ("r") are accepted, the Kafka key must
+// equal the partitioning column, and every configured column must be present.
+// Errors never echo record values, which may hold customer data.
+//
+//	record, err := debezium.Decode(source, registered.Identity, generation, raw)
+//	record.Payload // {"id":42,"tenant":"acme"}: the configured columns only
 func Decode(source stream.Source, identity stream.Identity, generation stream.Generation, record *stream.RawRecord) (stream.Record, error) {
 	if record == nil {
 		return stream.Record{}, errorsf("record is nil")
@@ -19,67 +28,112 @@ func Decode(source stream.Source, identity stream.Identity, generation stream.Ge
 	if err := validateIdentity(source, identity, generation); err != nil {
 		return stream.Record{}, err
 	}
-	envelope, err := decodeObject(record.Value, "envelope")
+	after, err := afterObject(record, source, identity)
 	if err != nil {
 		return stream.Record{}, err
 	}
-	op, err := stringField(envelope, "op", "envelope")
+	values, eventID, err := configuredValues(after, identity)
 	if err != nil {
 		return stream.Record{}, err
-	}
-	if op != "c" && op != "r" {
-		return stream.Record{}, errorsf("unsupported operation")
-	}
-	if err := validateSource(envelope, source); err != nil {
-		return stream.Record{}, err
-	}
-	afterRaw, ok := envelope["after"]
-	if !ok || isNull(afterRaw) {
-		return stream.Record{}, errorsf("operation has no after object")
-	}
-	after, err := decodeObject(afterRaw, "after")
-	if err != nil {
-		return stream.Record{}, err
-	}
-	if err := validateKey(record.Key, after, identity); err != nil {
-		return stream.Record{}, err
-	}
-
-	values := make(map[string]json.RawMessage, len(identity.Columns))
-	var eventID string
-	for _, column := range identity.Columns {
-		raw, ok := after[column.Name]
-		if !ok {
-			return stream.Record{}, errorsf("after object is missing configured column %q", column.Name)
-		}
-		if isNull(raw) && (column.Name == identity.SerialColumn || column.Name == identity.PartitioningColumn) {
-			return stream.Record{}, errorsf("required column %q is null", column.Name)
-		}
-		converted, err := protocol.ConvertValue(column.Type, raw, column.Name)
-		if err != nil {
-			return stream.Record{}, errorsf("%v", err)
-		}
-		values[column.Name] = converted
-		if column.Name == identity.EventIDColumn {
-			if isNull(raw) {
-				return stream.Record{}, errorsf("event id column %q is null", column.Name)
-			}
-			eventID, err = decodeString(raw, "event id "+column.Name)
-			if err != nil {
-				return stream.Record{}, err
-			}
-			if eventID == "" {
-				return stream.Record{}, errorsf("event id column %q is empty", column.Name)
-			}
-		}
 	}
 	payload, err := json.Marshal(values)
 	if err != nil {
 		return stream.Record{}, errorsf("marshal configured payload")
 	}
-	return stream.Record{Source: source, Payload: payload, Topic: record.Topic, Partition: record.Partition, Offset: record.Offset, LeaderEpoch: record.LeaderEpoch, EventID: eventID, Generation: generation}, nil
+	return stream.Record{
+		Source: source, Payload: payload, EventID: eventID, Generation: generation,
+		Topic: record.Topic, Partition: record.Partition, Offset: record.Offset, LeaderEpoch: record.LeaderEpoch,
+	}, nil
 }
 
+// afterObject validates the envelope (operation, source metadata, Kafka key)
+// and returns its "after" row image.
+func afterObject(record *stream.RawRecord, source stream.Source, identity stream.Identity) (map[string]json.RawMessage, error) {
+	envelope, err := decodeObject(record.Value, "envelope")
+	if err != nil {
+		return nil, err
+	}
+	op, err := stringField(envelope, "op", "envelope")
+	if err != nil {
+		return nil, err
+	}
+	if op != "c" && op != "r" {
+		return nil, errorsf("unsupported operation")
+	}
+	if err := validateSource(envelope, source); err != nil {
+		return nil, err
+	}
+	afterRaw, ok := envelope["after"]
+	if !ok || isNull(afterRaw) {
+		return nil, errorsf("operation has no after object")
+	}
+	after, err := decodeObject(afterRaw, "after")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateKey(record.Key, after, identity); err != nil {
+		return nil, err
+	}
+	return after, nil
+}
+
+// configuredValues converts every configured column, in identity order, and
+// picks out the event id on the way.
+func configuredValues(after map[string]json.RawMessage, identity stream.Identity) (map[string]json.RawMessage, string, error) {
+	values := make(map[string]json.RawMessage, len(identity.Columns))
+	var eventID string
+	for _, column := range identity.Columns {
+		converted, err := configuredValue(after, column, identity)
+		if err != nil {
+			return nil, "", err
+		}
+		values[column.Name] = converted
+		if column.Name == identity.EventIDColumn {
+			id, err := eventIDFrom(after[column.Name], column.Name)
+			if err != nil {
+				return nil, "", err
+			}
+			eventID = id
+		}
+	}
+	return values, eventID, nil
+}
+
+// configuredValue converts one column: present, non-null when required, valid
+// for its type.
+func configuredValue(after map[string]json.RawMessage, column stream.Column, identity stream.Identity) (json.RawMessage, error) {
+	raw, ok := after[column.Name]
+	if !ok {
+		return nil, errorsf("after object is missing configured column %q", column.Name)
+	}
+	if isNull(raw) && (column.Name == identity.SerialColumn || column.Name == identity.PartitioningColumn) {
+		return nil, errorsf("required column %q is null", column.Name)
+	}
+	converted, err := protocol.ConvertValue(column.Type, raw, column.Name)
+	if err != nil {
+		return nil, errorsf("%v", err)
+	}
+	return converted, nil
+}
+
+// eventIDFrom decodes a non-null, non-empty event id.
+func eventIDFrom(raw json.RawMessage, column string) (string, error) {
+	if isNull(raw) {
+		return "", errorsf("event id column %q is null", column)
+	}
+	eventID, err := decodeString(raw, "event id "+column)
+	if err != nil {
+		return "", err
+	}
+	if eventID == "" {
+		return "", errorsf("event id column %q is empty", column)
+	}
+	return eventID, nil
+}
+
+// validateIdentity checks that identity is internally consistent and matches
+// source: same table, same serial/partitioning columns, and configured
+// columns that line up with source.Columns one for one.
 func validateIdentity(source stream.Source, identity stream.Identity, generation stream.Generation) error {
 	if !generation.Valid() {
 		return errorsf("generation is invalid")
@@ -97,34 +151,27 @@ func validateIdentity(source stream.Source, identity stream.Identity, generation
 		return errorsf("identity columns do not match source configuration")
 	}
 	seen := make(map[string]bool, len(identity.Columns))
-	serialFound, partitionFound, eventIDFound := false, false, identity.EventIDColumn == ""
 	for i, column := range identity.Columns {
 		if column.Name == "" || seen[column.Name] || source.Columns[i] != column.Name {
 			return errorsf("identity has invalid configured columns")
 		}
 		seen[column.Name] = true
-		if !supported(column.Type) {
+		if !column.Type.Supported() {
 			return errorsf("configured column %q has unsupported type", column.Name)
 		}
-		if column.Name == identity.SerialColumn {
-			serialFound = true
-			if !integerType(column.Type) {
-				return errorsf("serial column %q has invalid type", column.Name)
-			}
-		}
-		if column.Name == identity.PartitioningColumn {
-			partitionFound = true
-		}
-		if column.Name == identity.EventIDColumn {
-			eventIDFound = true
+		if column.Name == identity.SerialColumn && !column.Type.Integer() {
+			return errorsf("serial column %q has invalid type", column.Name)
 		}
 	}
-	if !serialFound || !partitionFound || !eventIDFound {
+	eventIDKnown := identity.EventIDColumn == "" || seen[identity.EventIDColumn]
+	if !seen[identity.SerialColumn] || !seen[identity.PartitioningColumn] || !eventIDKnown {
 		return errorsf("identity is missing a required configured column")
 	}
 	return nil
 }
 
+// validateSource checks the envelope's source metadata names the public
+// schema and the configured table.
 func validateSource(envelope map[string]json.RawMessage, source stream.Source) error {
 	raw, ok := envelope["source"]
 	if !ok {
@@ -151,6 +198,8 @@ func validateSource(envelope map[string]json.RawMessage, source stream.Source) e
 	return nil
 }
 
+// validateKey checks the Kafka key holds only the partitioning column and
+// that its value matches the same column in after.
 func validateKey(raw []byte, after map[string]json.RawMessage, identity stream.Identity) error {
 	key, err := decodeObject(raw, "Kafka key")
 	if err != nil {
@@ -186,6 +235,8 @@ func validateKey(raw []byte, after map[string]json.RawMessage, identity stream.I
 	return nil
 }
 
+// decodeObject decodes raw as a single JSON object, rejecting anything empty,
+// non-object, or followed by trailing data.
 func decodeObject(raw []byte, name string) (map[string]json.RawMessage, error) {
 	if len(raw) == 0 {
 		return nil, errorsf("%s is empty", name)
@@ -202,6 +253,7 @@ func decodeObject(raw []byte, name string) (map[string]json.RawMessage, error) {
 	return object, nil
 }
 
+// stringField reads a required string field named name out of object.
 func stringField(object map[string]json.RawMessage, name, context string) (string, error) {
 	raw, ok := object[name]
 	if !ok {
@@ -218,6 +270,8 @@ func decodeString(raw []byte, field string) (string, error) {
 	return value, nil
 }
 
+// compact re-encodes a JSON value without insignificant whitespace, so two
+// equivalent values can be compared byte for byte.
 func compact(raw []byte) ([]byte, error) {
 	var out bytes.Buffer
 	if err := json.Compact(&out, raw); err != nil {
@@ -227,15 +281,4 @@ func compact(raw []byte) ([]byte, error) {
 }
 func isNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
 
-func supported(typ stream.PGType) bool {
-	switch typ {
-	case stream.PGInt2, stream.PGInt4, stream.PGInt8, stream.PGFloat4, stream.PGFloat8, stream.PGBool, stream.PGJSON, stream.PGBytea, stream.PGTimestamp, stream.PGTimestamptz, stream.PGText:
-		return true
-	default:
-		return false
-	}
-}
-func integerType(typ stream.PGType) bool {
-	return typ == stream.PGInt2 || typ == stream.PGInt4 || typ == stream.PGInt8
-}
 func errorsf(format string, args ...any) error { return fmt.Errorf("payload: "+format, args...) }

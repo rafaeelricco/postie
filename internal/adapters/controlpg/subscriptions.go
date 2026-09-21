@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+// EnsureSubscriptions inserts a "running" subscription at revision 1 for
+// every ID not already present in the scope. It is safe to repeat: an ID
+// that is already registered is left untouched, whatever its current state.
 func (s *Store) EnsureSubscriptions(ctx context.Context, scope streams.Scope, ids []string) error {
 	if err := validScope(scope); err != nil {
 		return err
@@ -39,6 +42,8 @@ func (s *Store) EnsureSubscriptions(ctx context.Context, scope streams.Scope, id
 	return nil
 }
 
+// Subscriptions lists every subscription registered for the scope, ordered
+// by destination ID. It is read-only.
 func (s *Store) Subscriptions(ctx context.Context, scope streams.Scope) ([]control.DesiredSubscription, error) {
 	if err := validScope(scope); err != nil {
 		return nil, err
@@ -64,6 +69,9 @@ func (s *Store) Subscriptions(ctx context.Context, scope streams.Scope) ([]contr
 	return out, nil
 }
 
+// SetDesired sets the destination's desired state to "running" or "paused"
+// and returns the row as stored. The revision only advances when the state
+// actually changes, so setting the same state again is a no-op on revision.
 func (s *Store) SetDesired(ctx context.Context, scope streams.Scope, id, state string) (control.DesiredSubscription, error) {
 	if err := validScope(scope); err != nil {
 		return control.DesiredSubscription{}, err
@@ -86,6 +94,9 @@ func (s *Store) SetDesired(ctx context.Context, scope streams.Scope, id, state s
 	return sub, nil
 }
 
+// ObserveSubscription records the state a worker has reached for a desired
+// subscription revision. The observation is kept separately from the lease so
+// a newly joined worker cannot count as ready until it has observed the state.
 func (s *Store) ObserveSubscription(ctx context.Context, scope streams.Scope, workerID, destination string, revision int64, state string) error {
 	if err := validScope(scope); err != nil {
 		return err
@@ -137,6 +148,3 @@ func (s *Store) SubscriptionObserved(ctx context.Context, scope streams.Scope, d
 	}
 	return observed, nil
 }
-
-// ReleaseLease removes a worker lease and all of that worker's observations in
-// one transaction, so a released worker cannot block a future convergence.

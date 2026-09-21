@@ -2,8 +2,10 @@ package kafka
 
 import (
 	"context"
-	"github.com/rafaeelricco/postie/internal/activity"
+
 	"github.com/twmb/franz-go/pkg/kgo"
+
+	"github.com/rafaeelricco/postie/internal/activity"
 )
 
 func (c *Consumer) onAssigned(ctx context.Context, cl *kgo.Client, partitions map[string][]int32) {
@@ -25,10 +27,12 @@ func (c *Consumer) onAssigned(ctx context.Context, cl *kgo.Client, partitions ma
 	cl.ResumeFetchPartitions(partitions)
 	c.log.Add(activity.Entry{Message: "partitions assigned", Destination: c.destination})
 }
+
 func (c *Consumer) onRevoked(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
 	c.stopWorkers(partitions)
 	c.log.Add(activity.Entry{Message: "partitions revoked", Destination: c.destination})
 }
+
 func (c *Consumer) onLost(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
 	c.mu.Lock()
 	c.assigned = false
@@ -37,6 +41,7 @@ func (c *Consumer) onLost(_ context.Context, _ *kgo.Client, partitions map[strin
 	c.log.Add(activity.Entry{Level: "warn", Message: "partition ownership lost", Destination: c.destination})
 	c.dispatch.Signal()
 }
+
 func (c *Consumer) stopWorkers(partitions map[string][]int32) {
 	c.mu.Lock()
 	workers := []*partitionWorker{}

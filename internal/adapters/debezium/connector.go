@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -75,6 +74,8 @@ func ConnectorConfig(src stream.Source, connection Connection, id stream.Identit
 	}
 }
 
+// quoteIdent double-quotes a Postgres identifier so it can appear literally
+// in a generated SQL statement.
 func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
@@ -93,24 +94,19 @@ func EnsureConnector(ctx context.Context, client *http.Client, connectURL string
 	if err != nil {
 		return fmt.Errorf("capture: marshal connector config: %w", err)
 	}
-	endpoint := strings.TrimRight(connectURL, "/") + "/connectors/" + n.Connector + "/config"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, connectorURL(connectURL, n.Connector, "config"), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("capture: build connector request for %q: %w", n.Connector, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	httpClient := client
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := do(client, req)
 	if err != nil {
 		return fmt.Errorf("capture: put connector config for %q: %w", n.Connector, err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	respBody := errorBody(resp) // read even on success so the connection can be reused
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
 		return nil
 	}
-	return fmt.Errorf("capture: connect returned %d for connector %q: %s", resp.StatusCode, n.Connector, string(respBody))
+	return fmt.Errorf("capture: connect returned %d for connector %q: %s", resp.StatusCode, n.Connector, respBody)
 }

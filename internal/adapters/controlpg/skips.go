@@ -7,6 +7,9 @@ import (
 	streams "github.com/rafaeelricco/postie/internal/stream"
 )
 
+// SaveSkip records that a record reached a terminal outcome for a
+// destination without being delivered, so a retry after a crash can tell it
+// apart from one never attempted. It is safe to repeat for the same record.
 func (s *Store) SaveSkip(ctx context.Context, scope streams.Scope, destination string, record streams.Record) error {
 	if err := validScope(scope); err != nil {
 		return err

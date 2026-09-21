@@ -2,13 +2,14 @@ package provision
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/rafaeelricco/postie/internal/stream"
 )
+
+// captureReadyPoll is how often a new capture is checked for readiness.
+const captureReadyPoll = 200 * time.Millisecond
 
 // Service provisions and health-checks source streams through explicit
 // infrastructure adapters.
@@ -16,7 +17,7 @@ type Service struct {
 	Scope        stream.Scope
 	Partitions   int32
 	Replication  int16
-	Publications map[string]string
+	Publications map[string]string // source ID -> externally owned publication
 	Sources      map[string]Source
 	Topics       Topics
 	Connectors   Connectors
@@ -24,10 +25,13 @@ type Service struct {
 }
 
 // ProvisionSource ensures the table identity, topic, connector, slot, and
-// control-store registration for one source.
+// control-store registration for one source. It is idempotent: a stream that
+// is already registered is only verified, never recreated.
+//
+//	registered, err := service.ProvisionSource(ctx, source)
+//	// registered.Names.Topic is where Debezium writes this source's events
 func (s *Service) ProvisionSource(ctx context.Context, source stream.Source) (stream.Registration, error) {
-	inspector := s.Sources[source.ID]
-	facts, err := inspector.InspectTable(ctx)
+	facts, err := s.Sources[source.ID].InspectTable(ctx)
 	if err != nil {
 		return stream.Registration{}, err
 	}
@@ -35,36 +39,53 @@ func (s *Service) ProvisionSource(ctx context.Context, source stream.Source) (st
 	if err != nil {
 		return stream.Registration{}, err
 	}
-
-	names := NamesFor(s.Scope.Namespace, s.Scope.Environment, source, s.Scope.Generation)
-	publication := PublicationManaged
-	if external := s.Publications[source.ID]; external != "" {
-		names.Publication = external
-		publication = PublicationExternal
-	}
-
+	names, publication := s.captureNames(source)
 	registered, found, err := s.Store.GetStream(ctx, s.Scope, source.ID)
 	if err != nil {
 		return stream.Registration{}, err
 	}
 	if found {
-		if registered.Blocked != "" {
-			return stream.Registration{}, fmt.Errorf("control: source is blocked: %s", registered.Blocked)
-		}
-		if err := s.validateRegisteredStream(ctx, source, identity, names, registered); err != nil {
-			var contract *ContractError
-			if !errors.As(err, &contract) {
-				return stream.Registration{}, fmt.Errorf("capture health could not be verified; retry provisioning: %w", err)
-			}
-			reason := err.Error()
-			if blockErr := s.Store.BlockSource(ctx, s.Scope, source.ID, reason); blockErr != nil {
-				return stream.Registration{}, fmt.Errorf("%v; block source: %w", err, blockErr)
-			}
-			return stream.Registration{}, fmt.Errorf("control: source blocked: %s", reason)
-		}
+		return s.confirmEstablished(ctx, source, identity, names, registered)
+	}
+	return s.establish(ctx, source, identity, names, publication)
+}
+
+// captureNames derives the stream's resource names. A source with an
+// external publication uses that name and tells Debezium not to create one.
+func (s *Service) captureNames(source stream.Source) (stream.Names, PublicationMode) {
+	names := NamesFor(s.Scope.Namespace, s.Scope.Environment, source, s.Scope.Generation)
+	if external := s.Publications[source.ID]; external != "" {
+		names.Publication = external
+		return names, PublicationExternal
+	}
+	return names, PublicationManaged
+}
+
+// confirmEstablished verifies a registered stream against the live systems.
+// A contract violation blocks the source durably. Anything else is treated as
+// transient, and the caller is asked to retry.
+func (s *Service) confirmEstablished(ctx context.Context, source stream.Source, identity stream.Identity, names stream.Names, registered stream.Registration) (stream.Registration, error) {
+	if registered.Blocked != "" {
+		return stream.Registration{}, fmt.Errorf("control: source is blocked: %s", registered.Blocked)
+	}
+	err := s.validateRegisteredStream(ctx, source, identity, names, registered)
+	if err == nil {
 		return registered, nil
 	}
+	if !isContract(err) {
+		return stream.Registration{}, fmt.Errorf("capture health could not be verified; retry provisioning: %w", err)
+	}
+	reason := err.Error()
+	if blockErr := s.Store.BlockSource(ctx, s.Scope, source.ID, reason); blockErr != nil {
+		return stream.Registration{}, fmt.Errorf("%v; block source: %w", err, blockErr)
+	}
+	return stream.Registration{}, fmt.Errorf("control: source blocked: %s", reason)
+}
 
+// establish creates the topic and connector, waits for the capture to come
+// up, and registers the stream last, so a registration always points at a
+// capture that worked at least once.
+func (s *Service) establish(ctx context.Context, source stream.Source, identity stream.Identity, names stream.Names, publication PublicationMode) (stream.Registration, error) {
 	topicID, err := s.Topics.EnsureTopic(ctx, names, identity.Partitions, s.Replication)
 	if err != nil {
 		return stream.Registration{}, err
@@ -72,97 +93,29 @@ func (s *Service) ProvisionSource(ctx context.Context, source stream.Source) (st
 	if err := s.Connectors.EnsureConnector(ctx, source, identity, names, publication); err != nil {
 		return stream.Registration{}, err
 	}
-	for {
-		status, statusErr := s.Connectors.ConnectorStatus(ctx, names.Connector)
-		slot, slotErr := inspector.SlotHealth(ctx, names.Slot)
-		ready := statusErr == nil && slotErr == nil && status.Connector == StateRunning && len(status.Tasks) > 0 && !status.Failed && slot.Exists && slot.WALStatus != WALLost && slot.WALStatus != WALUnreserved
-		for _, task := range status.Tasks {
-			ready = ready && task == StateRunning
-		}
-		if ready {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return stream.Registration{}, fmt.Errorf("capture did not become ready before provisioning timed out")
-		case <-time.After(200 * time.Millisecond):
-		}
+	if err := s.awaitCapture(ctx, s.Sources[source.ID], names); err != nil {
+		return stream.Registration{}, err
 	}
-	registered = stream.Registration{SourceID: source.ID, Identity: identity, Names: names, TopicID: topicID}
+	registered := stream.Registration{SourceID: source.ID, Identity: identity, Names: names, TopicID: topicID}
 	if err := s.Store.RegisterStream(ctx, s.Scope, registered); err != nil {
 		return stream.Registration{}, err
 	}
 	return registered, nil
 }
 
-// InspectSource checks the established stream health. It returns the state
-// and user-facing reason; durable blocking is owned by control.
-func (s *Service) InspectSource(ctx context.Context, source stream.Source, registered stream.Registration) (string, string) {
-	inspector := s.Sources[source.ID]
-	identity, err := inspector.InspectTable(ctx)
-	if err != nil {
-		var contract *ContractError
-		if errors.As(err, &contract) {
-			return "blocked", "source table violates capture contract"
+// awaitCapture polls until the connector and its slot are ready. Errors while
+// polling are expected during startup, so only ctx ends the wait.
+func (s *Service) awaitCapture(ctx context.Context, inspector Source, names stream.Names) error {
+	for {
+		status, statusErr := s.Connectors.ConnectorStatus(ctx, names.Connector)
+		slot, slotErr := inspector.SlotHealth(ctx, names.Slot)
+		if statusErr == nil && slotErr == nil && captureReady(status, slot) {
+			return nil
 		}
-		return "unavailable", "source database unavailable"
-	}
-	frozen, err := IdentityFrom(source, identity, s.Partitions)
-	if err != nil {
-		var contract *ContractError
-		if errors.As(err, &contract) {
-			return "blocked", "source table violates capture contract"
-		}
-		return "unavailable", "source database unavailable"
-	}
-	if !reflect.DeepEqual(frozen, registered.Identity) {
-		return "blocked", "stream identity changed"
-	}
-	names := NamesFor(s.Scope.Namespace, s.Scope.Environment, source, s.Scope.Generation)
-	if publication := s.Publications[source.ID]; publication != "" {
-		names.Publication = publication
-	}
-	if registered.Names != names {
-		return "blocked", "stream configuration changed"
-	}
-	details, err := s.Topics.Topic(ctx, names.Topic)
-	if err != nil {
-		var metadata *TopicMetadataError
-		if errors.As(err, &metadata) {
-			if metadata.Partition {
-				return "unavailable", metadata.Error()
-			}
-			return "unavailable", "Kafka topic unavailable"
-		}
-		return "unavailable", "Kafka metadata unavailable"
-	}
-	if !details.Exists {
-		return "blocked", "established topic missing"
-	}
-	if err := validateReplication(names.Topic, details, s.Replication); err != nil {
-		return "unavailable", err.Error()
-	}
-	if details.ID != registered.TopicID || details.Partitions != int(registered.Identity.Partitions) {
-		return "blocked", "topic identity changed"
-	}
-	slot, err := inspector.SlotHealth(ctx, names.Slot)
-	if err != nil {
-		return "unavailable", "replication slot health unavailable"
-	}
-	if !slot.Exists || slot.WALStatus == WALLost || slot.WALStatus == WALUnreserved {
-		return "blocked", "replication slot or WAL history lost"
-	}
-	status, err := s.Connectors.ConnectorStatus(ctx, names.Connector)
-	if errors.Is(err, ErrConnectorMissing) {
-		return "blocked", "established connector missing"
-	}
-	if err != nil || status.Failed || status.Connector != StateRunning || len(status.Tasks) == 0 {
-		return "unavailable", "capture connector unavailable"
-	}
-	for _, task := range status.Tasks {
-		if task != StateRunning {
-			return "unavailable", "capture task unavailable"
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("capture did not become ready before provisioning timed out")
+		case <-time.After(captureReadyPoll):
 		}
 	}
-	return "running", ""
 }

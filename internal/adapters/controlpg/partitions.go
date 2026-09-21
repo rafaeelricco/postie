@@ -7,6 +7,8 @@ import (
 	streams "github.com/rafaeelricco/postie/internal/stream"
 )
 
+// PartitionStarted reports whether MarkPartitionStarted has already been
+// recorded for this destination, topic, and partition. It is read-only.
 func (s *Store) PartitionStarted(ctx context.Context, scope streams.Scope, destination, topic string, partition int32) (bool, error) {
 	if err := validScope(scope); err != nil {
 		return false, err
@@ -21,6 +23,10 @@ func (s *Store) PartitionStarted(ctx context.Context, scope streams.Scope, desti
 	return exists, nil
 }
 
+// MarkPartitionStarted records that a destination has begun consuming a
+// partition. From then on a missing committed offset means history was lost,
+// and the consumer blocks the source instead of starting over. It is safe to
+// repeat for the same partition.
 func (s *Store) MarkPartitionStarted(ctx context.Context, scope streams.Scope, destination, topic string, partition int32) error {
 	if err := validScope(scope); err != nil {
 		return err

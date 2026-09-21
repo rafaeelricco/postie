@@ -10,6 +10,10 @@ import (
 	"github.com/rafaeelricco/postie/internal/provision"
 )
 
+// SlotHealth reports whether the named replication slot exists and, if so,
+// whether it is active, its WAL status, and how many bytes of WAL it is
+// lagging behind the current position. It is read-only and opens and closes
+// its own connection each call.
 func (c Client) SlotHealth(ctx context.Context, slot string) (provision.SlotStatus, error) {
 	conn, err := pgx.Connect(ctx, connString(c.Connection))
 	if err != nil {

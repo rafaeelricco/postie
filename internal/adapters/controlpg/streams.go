@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+// GetStream looks up the registration for a source. The bool reports whether
+// it was found, independent of the error. It is read-only.
 func (s *Store) GetStream(ctx context.Context, scope streams.Scope, sourceID string) (streams.Registration, bool, error) {
 	if err := validScope(scope); err != nil {
 		return streams.Registration{}, false, err
@@ -39,6 +41,11 @@ func (s *Store) GetStream(ctx context.Context, scope streams.Scope, sourceID str
 	return streams.Registration{SourceID: sourceID, Identity: identity, Names: names, TopicID: id.Bytes, Blocked: blocked}, true, nil
 }
 
+// RegisterStream inserts a stream registration if none exists yet for the
+// source, then verifies under the same transaction that the stored identity,
+// names, and topic ID match what was requested. Registering the same source
+// with the same identity, names, and topic again is safe; registering it
+// with anything different fails instead of silently overwriting the row.
 func (s *Store) RegisterStream(ctx context.Context, scope streams.Scope, stream streams.Registration) error {
 	if err := validScope(scope); err != nil {
 		return err
@@ -87,6 +94,9 @@ func (s *Store) RegisterStream(ctx context.Context, scope streams.Scope, stream 
 	return nil
 }
 
+// BlockSource marks a registered stream as blocked with the given reason. It
+// fails if the source has no registration to update. Calling it again with
+// the same or a different reason just overwrites the stored reason.
 func (s *Store) BlockSource(ctx context.Context, scope streams.Scope, sourceID, reason string) error {
 	if err := validScope(scope); err != nil {
 		return err

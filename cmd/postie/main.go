@@ -17,11 +17,7 @@ func main() {
 	configPath := flag.String("config", "postie.yaml", "Postie configuration")
 	generation := flag.Int("generation", 1, "stream generation")
 	flag.Parse()
-	engine, err := config.LoadEngine(*configPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	application, err := config.LoadApplication(engine.ApplicationConfig)
+	engine, application, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatal(err)
 	}

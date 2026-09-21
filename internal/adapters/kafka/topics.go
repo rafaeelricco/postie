@@ -20,6 +20,9 @@ type Admin struct {
 	client *kgo.Client
 }
 
+// NewAdmin builds a Kafka client seeded with brokers and returns an Admin for
+// topic and metadata operations. The caller owns the result and must call
+// Close.
 func NewAdmin(brokers []string) (*Admin, error) {
 	client, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
 	if err != nil {
@@ -28,6 +31,7 @@ func NewAdmin(brokers []string) (*Admin, error) {
 	return &Admin{Client: kadm.NewClient(client), client: client}, nil
 }
 
+// Ping checks that the brokers are reachable. It is safe to call repeatedly.
 func (a *Admin) Ping(ctx context.Context) error {
 	if a.client != nil {
 		return a.client.Ping(ctx)
@@ -36,12 +40,17 @@ func (a *Admin) Ping(ctx context.Context) error {
 	return err
 }
 
+// Close releases the underlying Kafka client. It is safe to call on a nil
+// Admin.
 func (a *Admin) Close() {
 	if a != nil && a.Client != nil {
 		a.Client.Close()
 	}
 }
 
+// topicConfigs returns the topic-level configuration postie requires: no
+// time- or size-based retention, and, once replicated across at least three
+// brokers, a minimum in-sync replica count of two.
 func topicConfigs(replication int16) map[string]*string {
 	configs := map[string]*string{
 		"cleanup.policy":  kadm.StringPtr("delete"),
@@ -74,6 +83,11 @@ func ValidateTopicReplication(detail kadm.TopicDetail, replication int16) error 
 	return nil
 }
 
+// EnsureTopic makes sure the named topic exists with the given partition
+// count, replication factor, and required configs, creating it if needed,
+// and returns its topic ID. It is safe to call concurrently and to repeat:
+// a topic another caller just created is picked up by retrying the lookup
+// instead of failing on TopicAlreadyExists.
 func (a *Admin) EnsureTopic(ctx context.Context, n stream.Names, partitions int32, replication int16) ([16]byte, error) {
 	wantConfigs := topicConfigs(replication)
 	id, exists, err := a.existingTopic(ctx, n.Topic, partitions, replication, wantConfigs)
@@ -103,6 +117,9 @@ func (a *Admin) EnsureTopic(ctx context.Context, n stream.Names, partitions int3
 	}
 }
 
+// existingTopic looks up topic by name and, if it exists, validates that its
+// partition count, replication, and configs match what the caller wants. The
+// bool return reports whether the topic was found, independent of the error.
 func (a *Admin) existingTopic(ctx context.Context, topic string, partitions int32, replication int16, want map[string]*string) ([16]byte, bool, error) {
 	listed, err := a.Client.ListTopics(ctx, topic)
 	if err != nil {
@@ -124,6 +141,9 @@ func (a *Admin) existingTopic(ctx context.Context, topic string, partitions int3
 	return [16]byte(detail.ID), true, nil
 }
 
+// verifyTopicConfigs reports an error if any of the wanted topic configs
+// differ from what is currently set on topic. A nil wanted value is not
+// checked.
 func (a *Admin) verifyTopicConfigs(ctx context.Context, topic string, want map[string]*string) error {
 	resourceConfigs, err := a.Client.DescribeTopicConfigs(ctx, topic)
 	if err != nil {
@@ -148,6 +168,9 @@ func (a *Admin) verifyTopicConfigs(ctx context.Context, topic string, want map[s
 	return nil
 }
 
+// Topic reports the current facts for the named topic: whether it exists,
+// its ID, partition count, and per-partition replica count. It is read-only
+// and safe to call repeatedly.
 func (a *Admin) Topic(ctx context.Context, name string) (provision.TopicFacts, error) {
 	listed, err := a.Client.ListTopics(ctx, name)
 	if err != nil {

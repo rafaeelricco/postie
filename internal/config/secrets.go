@@ -5,9 +5,13 @@ import (
 	"strings"
 )
 
+const redactedPassword = "[REDACTED]"
+
 // OperatorToken resolves the operator bearer token. A configured token file
 // wins over the environment and must be readable; the result is trimmed and
 // must not be empty.
+//
+//	token, err := config.OperatorToken(os.Getenv("POSTIE_OPERATOR_TOKEN"), engine.Operator.TokenFile, os.ReadFile)
 func OperatorToken(env, file string, readFile func(string) ([]byte, error)) (string, error) {
 	token := env
 	if file != "" {
@@ -24,30 +28,45 @@ func OperatorToken(env, file string, readFile func(string) ([]byte, error)) (str
 	return token, nil
 }
 
-// Redacted returns a copy safe for logs and control-store revisions.
+// Redacted returns a copy safe for logs and control-store revisions. It is a
+// deep copy: changing the result never changes the receiver.
 func (c Application) Redacted() Application {
 	redacted := Application{
 		Sources:      make([]Source, len(c.Sources)),
 		Destinations: make([]Destination, len(c.Destinations)),
 	}
 	for i, s := range c.Sources {
-		s.Columns = append([]string(nil), s.Columns...)
-		if s.Password != "" {
-			s.Password = "[REDACTED]"
-		}
-		redacted.Sources[i] = s
+		redacted.Sources[i] = redactSource(s)
 	}
 	for i, d := range c.Destinations {
-		d.Sources = append([]string(nil), d.Sources...)
-		if d.Filter != nil {
-			filter := *d.Filter
-			filter.Values = append([]string(nil), d.Filter.Values...)
-			d.Filter = &filter
-		}
-		if d.Password != "" {
-			d.Password = "[REDACTED]"
-		}
-		redacted.Destinations[i] = d
+		redacted.Destinations[i] = redactDestination(d)
 	}
 	return redacted
 }
+
+func redactSource(s Source) Source {
+	s.Columns = cloneStrings(s.Columns)
+	s.Password = redactPassword(s.Password)
+	return s
+}
+
+func redactDestination(d Destination) Destination {
+	d.Sources = cloneStrings(d.Sources)
+	d.Password = redactPassword(d.Password)
+	if d.Filter != nil {
+		d.Filter = &Filter{Column: d.Filter.Column, Values: cloneStrings(d.Filter.Values)}
+	}
+	return d
+}
+
+// redactPassword hides a password but keeps "" as is, so the output still
+// shows whether one was configured.
+func redactPassword(password string) string {
+	if password == "" {
+		return ""
+	}
+	return redactedPassword
+}
+
+// cloneStrings copies a slice; nil and empty both become nil.
+func cloneStrings(items []string) []string { return append([]string(nil), items...) }

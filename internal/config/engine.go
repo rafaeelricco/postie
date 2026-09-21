@@ -2,6 +2,10 @@ package config
 
 import "time"
 
+// Engine is the engine configuration file: cluster-wide settings that do not
+// belong to any one source or destination. Zero-valued settings get their
+// defaults from Validate, and ApplicationConfig is resolved relative to the
+// process's working directory.
 type Engine struct {
 	Version           int    `yaml:"version"`
 	Namespace         string `yaml:"namespace"`
@@ -45,9 +49,11 @@ type SourcePolicy struct {
 	Publication string `yaml:"publication"`
 }
 
+// DestinationKind says whether a destination may be replayed.
 type DestinationKind string
 
 const (
+	// KindProjection may be replayed: a lost or corrupted projection can be rebuilt.
 	KindProjection DestinationKind = "projection"
 	KindReaction   DestinationKind = "reaction" // the default: never replayable
 )

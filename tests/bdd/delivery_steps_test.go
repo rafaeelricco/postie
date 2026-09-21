@@ -11,9 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"testing"
 	"time"
-
-	"github.com/cucumber/godog"
 
 	"github.com/rafaeelricco/postie/internal/config"
 	"github.com/rafaeelricco/postie/internal/delivery"
@@ -40,10 +39,11 @@ type recordedRequest struct {
 	body        []byte
 }
 
-// deliveryWorld is rebuilt from scratch in sc.Before for every scenario, so
-// scenarios never leak state into one another. Its Sender's Sleep records
-// durations instead of ever really waiting.
+// deliveryWorld is built per scenario by newDeliveryWorld, so scenarios never
+// leak state into one another. Its Sender's Sleep records durations instead of
+// ever really waiting.
 type deliveryWorld struct {
+	t      *testing.T
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -63,59 +63,167 @@ type deliveryWorld struct {
 	err     error
 }
 
-func registerDeliverySteps(sc *godog.ScenarioContext) {
-	w := &deliveryWorld{}
-
-	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
-		cctx, cancel := context.WithCancel(context.Background())
-		*w = deliveryWorld{ctx: cctx, cancel: cancel}
-		w.sender = delivery.NewProcessor(delivery.Destination{}, nil)
-		w.sender.Sleep = func(ctx context.Context, d time.Duration) error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			w.sleeps = append(w.sleeps, d)
-			return nil
+// newDeliveryWorld starts every scenario with destination "projection"
+// (Basic credentials user/pass) and source "events".
+func newDeliveryWorld(t *testing.T) *deliveryWorld {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &deliveryWorld{
+		t:           t,
+		ctx:         ctx,
+		cancel:      cancel,
+		destination: config.Destination{ID: "projection", Description: "projection", Username: "user", Password: "pass"},
+		source:      stream.Source{ID: "events", Description: "events"},
+	}
+	w.sender = delivery.NewProcessor(delivery.Destination{}, nil)
+	w.sender.Sleep = func(ctx context.Context, d time.Duration) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
-		return ctx, nil
-	})
-	sc.After(func(ctx context.Context, _ *godog.Scenario, err error) (context.Context, error) {
+		w.sleeps = append(w.sleeps, d)
+		return nil
+	}
+	t.Cleanup(func() {
 		if w.receiver != nil {
 			w.receiver.Close()
 		}
-		if w.cancel != nil {
-			w.cancel()
-		}
-		return ctx, err
+		cancel()
+	})
+	return w
+}
+
+const (
+	createdPayload = `{"event_name":"Created"}`
+	successAck     = `{"result":{"success":{}}}`
+)
+
+// docs/specification.md, "HTTP delivery": request shape, acknowledgements, retries.
+// "Delivery and operations": backoff bounds.
+func TestDelivery(t *testing.T) {
+	t.Run("a success acknowledgement delivers the record", func(t *testing.T) {
+		w := newDeliveryWorld(t)
+		w.receiverAnswers(200, successAck)
+		w.deliverPayload(createdPayload)
+		w.outcomeAfterAttempts(delivery.Delivered, 1)
+		w.requestWasBasicJSONPost()
+		w.requestBodyMatchesContractEnvelope()
 	})
 
-	sc.Given(`^a destination "([^"]*)" with Basic credentials "([^"]*)" and "([^"]*)"$`, w.aDestination)
-	sc.Given(`^a source "([^"]*)"$`, w.aSource)
-	sc.Given(`^the receiver answers (\d+) with body:$`, w.receiverAnswersWithBody)
-	sc.Given(`^the receiver answers 200 with a success acknowledgement$`, w.receiverAnswersSuccess)
-	sc.Given(`^the receiver first answers (\d+) with body '([^']*)'$`, w.receiverFirstAnswers)
-	sc.Given(`^the receiver then answers 200 with a success acknowledgement$`, w.receiverAnswersSuccess)
-	sc.Given(`^the receiver first answers 200 with a body larger than 64 KiB$`, w.receiverFirstAnswersOversize)
-	sc.Given(`^the receiver fails (\d+) times then answers 200 with a success acknowledgement$`, w.receiverFailsThenSucceeds)
-	sc.Given(`^the receiver always answers (\d+)$`, w.receiverAlwaysAnswers)
-	sc.Given(`^the next retry sleep cancels the delivery$`, w.nextSleepCancels)
-	sc.Given(`^a record with topic "([^"]*)", partition (\d+), offset (\d+), event id "([^"]*)", generation (\d+), replay (true|false)$`, w.aRecord)
-	sc.Given(`^the destination filter is on column "([^"]*)" with values "([^"]*)"$`, w.destinationFilterOnColumn)
+	t.Run("anything short of a terminal acknowledgement is retried", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			status int
+			body   string
+		}{
+			{"500", 500, ""},
+			{"401 with a success body", 401, successAck},
+			{"200 with an empty body", 200, ""},
+			{"200 with malformed JSON", 200, `{not json`},
+			{"200 with an empty result", 200, `{"result":{}}`},
+			{"200 with a null success", 200, `{"result":{"success":null}}`},
+			{"200 with must_retry", 200, `{"result":{"error":{"policy":"must_retry","class":"c","description":"d"}}}`},
+			{"200 with keep_going missing class", 200, `{"result":{"error":{"policy":"keep_going"}}}`},
+			{"200 with an unknown policy", 200, `{"result":{"error":{"policy":"surprise","class":"c","description":"d"}}}`},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				w := newDeliveryWorld(t)
+				w.receiverAnswers(c.status, c.body)
+				w.receiverAnswersSuccess()
+				w.deliverPayload(createdPayload)
+				w.outcomeAfterAttempts(delivery.Delivered, 2)
+			})
+		}
+	})
 
-	sc.When(`^the engine delivers the payload '([^']*)'$`, w.deliverPayload)
-	sc.When(`^the engine delivers the record$`, w.deliverRecord)
+	t.Run("success wins when both outcomes are present", func(t *testing.T) {
+		w := newDeliveryWorld(t)
+		w.receiverAnswers(200, `{"result":{"success":{},"error":{"policy":"must_retry","class":"c","description":"d"}}}`)
+		w.deliverPayload(createdPayload)
+		w.outcomeAfterAttempts(delivery.Delivered, 1)
+	})
 
-	sc.Then(`^the outcome is "([^"]*)" after (\d+) attempts?$`, w.outcomeAfterAttempts)
-	sc.Then(`^the outcome is "([^"]*)"$`, w.outcomeIs)
-	sc.Then(`^the request was a Basic-authenticated JSON POST$`, w.requestWasBasicJSONPost)
-	sc.Then(`^the request body matches the delivery contract envelope around that payload$`, w.requestBodyMatchesContractEnvelope)
-	sc.Then(`^every recorded sleep was between 1 and 60 seconds$`, w.everySleepBetween1And60)
-	sc.Then(`^the delivery failed with a cancellation error$`, w.deliveryFailedWithCancellation)
-	sc.Then(`^the outcome is the zero value$`, w.outcomeIsZeroValue)
-	sc.Then(`^the request carried the diagnostic headers for that record$`, w.requestCarriedDiagnosticHeaders)
-	sc.Then(`^the receiver request count is (\d+)$`, w.receiverRequestCountIs)
+	t.Run("keep_going is a terminal skip", func(t *testing.T) {
+		w := newDeliveryWorld(t)
+		w.receiverAnswers(200, `{"result":{"error":{"policy":"keep_going","class":"c","description":"d"}}}`)
+		w.deliverPayload(createdPayload)
+		w.outcomeAfterAttempts(delivery.Skipped, 1)
+	})
+
+	t.Run("a response larger than 64 KiB is retried", func(t *testing.T) {
+		w := newDeliveryWorld(t)
+		w.receiverFirstAnswersOversize()
+		w.receiverAnswersSuccess()
+		w.deliverPayload(createdPayload)
+		w.outcomeAfterAttempts(delivery.Delivered, 2)
+	})
+
+	t.Run("every retry wait is between 1 and 60 seconds", func(t *testing.T) {
+		w := newDeliveryWorld(t)
+		w.receiverFailsThenSucceeds(12)
+		w.deliverPayload(createdPayload)
+		w.outcomeAfterAttempts(delivery.Delivered, 13)
+		w.everySleepBetween1And60()
+	})
+
+	t.Run("cancelling stops the retry loop without an outcome", func(t *testing.T) {
+		w := newDeliveryWorld(t)
+		w.receiverAnswers(500, "") // the last scripted response repeats, so this is "always 500"
+		w.nextSleepCancels()
+		w.deliverPayload(createdPayload)
+		w.deliveryFailedWithCancellation()
+		w.outcomeIsZeroValue()
+		w.receiverRequestCountIs(1)
+	})
+
+	t.Run("diagnostic headers identify the record", func(t *testing.T) {
+		w := newDeliveryWorld(t)
+		w.record = stream.Record{
+			Source:     w.source,
+			Payload:    json.RawMessage(`{}`),
+			Topic:      "events",
+			Partition:  3,
+			Offset:     42,
+			EventID:    "evt-1",
+			Generation: 2,
+			Replay:     true,
+		}
+		w.receiverAnswersSuccess()
+		w.deliverRecord()
+		w.outcomeAfterAttempts(delivery.Delivered, 1)
+		w.requestCarriedDiagnosticHeaders()
+	})
+}
+
+// docs/specification.md, "HTTP delivery": filters.
+func TestFilter(t *testing.T) {
+	created := &config.Filter{Column: "event_name", Values: []string{"Created"}}
+	cases := []struct {
+		name     string
+		filter   *config.Filter
+		payload  string
+		outcome  delivery.Outcome
+		requests int
+	}{
+		{"matching value", created, `{"event_name":"Created"}`, delivery.Delivered, 1},
+		{"other value", created, `{"event_name":"Deleted"}`, delivery.Filtered, 0},
+		{"column absent", created, `{"other":1}`, delivery.Delivered, 1},
+		{"non-string column", created, `{"event_name":3}`, delivery.Delivered, 1},
+		{"non-object payload", created, `"just text"`, delivery.Delivered, 1},
+		{"no filter", nil, `{"event_name":"Deleted"}`, delivery.Delivered, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := newDeliveryWorld(t)
+			w.receiverAnswersSuccess()
+			w.destination.Filter = c.filter
+			w.deliverPayload(c.payload)
+			w.outcomeIs(c.outcome)
+			w.receiverRequestCountIs(c.requests)
+		})
+	}
 }
 
 func (w *deliveryWorld) ensureReceiver() {
@@ -151,167 +259,87 @@ func (w *deliveryWorld) serve(rw http.ResponseWriter, r *http.Request) {
 	_, _ = rw.Write([]byte(resp.body))
 }
 
-func (w *deliveryWorld) aDestination(id, username, password string) error {
-	w.destination = config.Destination{ID: id, Description: id, Username: username, Password: password}
-	return nil
-}
-
-func (w *deliveryWorld) aSource(id string) error {
-	w.source = stream.Source{ID: id, Description: id}
-	return nil
-}
-
-func (w *deliveryWorld) receiverAnswersWithBody(status int, doc *godog.DocString) error {
-	w.ensureReceiver()
-	w.script = append(w.script, scriptedResponse{status: status, body: doc.Content})
-	return nil
-}
-
-func (w *deliveryWorld) receiverAnswersSuccess() error {
-	w.ensureReceiver()
-	w.script = append(w.script, scriptedResponse{status: 200, body: `{"result":{"success":{}}}`})
-	return nil
-}
-
-func (w *deliveryWorld) receiverFirstAnswers(status int, body string) error {
+func (w *deliveryWorld) receiverAnswers(status int, body string) {
 	w.ensureReceiver()
 	w.script = append(w.script, scriptedResponse{status: status, body: body})
-	return nil
 }
 
-func (w *deliveryWorld) receiverFirstAnswersOversize() error {
+func (w *deliveryWorld) receiverAnswersSuccess() { w.receiverAnswers(200, successAck) }
+
+func (w *deliveryWorld) receiverFirstAnswersOversize() {
 	w.ensureReceiver()
 	big := fmt.Sprintf(`{"result":{"success":{"pad":"%s"}}}`, strings.Repeat("x", 70*1024))
 	w.script = append(w.script, scriptedResponse{status: 200, body: big})
-	return nil
 }
 
-func (w *deliveryWorld) receiverFailsThenSucceeds(times int) error {
+func (w *deliveryWorld) receiverFailsThenSucceeds(times int) {
 	w.ensureReceiver()
 	for i := 0; i < times; i++ {
 		w.script = append(w.script, scriptedResponse{status: 500, body: ""})
 	}
-	w.script = append(w.script, scriptedResponse{status: 200, body: `{"result":{"success":{}}}`})
-	return nil
+	w.script = append(w.script, scriptedResponse{status: 200, body: successAck})
 }
 
-func (w *deliveryWorld) receiverAlwaysAnswers(status int) error {
-	w.ensureReceiver()
-	w.script = append(w.script, scriptedResponse{status: status, body: ""})
-	return nil
-}
-
-func (w *deliveryWorld) nextSleepCancels() error {
+func (w *deliveryWorld) nextSleepCancels() {
 	w.sender.Sleep = func(ctx context.Context, _ time.Duration) error {
 		w.cancel()
 		return ctx.Err()
 	}
-	return nil
 }
 
-func (w *deliveryWorld) aRecord(topic string, partition, offset int, eventID string, generation int, replay string) error {
-	w.record = stream.Record{
-		Source:     w.source,
-		Payload:    json.RawMessage(`{}`),
-		Topic:      topic,
-		Partition:  int32(partition),
-		Offset:     int64(offset),
-		EventID:    eventID,
-		Generation: stream.Generation(generation),
-		Replay:     replay == "true",
-	}
-	return nil
-}
-
-func (w *deliveryWorld) destinationFilterOnColumn(column, values string) error {
-	if column == "" {
-		w.destination.Filter = nil
-		return nil
-	}
-	w.destination.Filter = &config.Filter{Column: column, Values: strings.Split(values, ",")}
-	return nil
-}
-
-func (w *deliveryWorld) deliverPayload(payload string) error {
+func (w *deliveryWorld) deliverPayload(payload string) {
 	w.record.Source = w.source
 	w.record.Payload = json.RawMessage(payload)
 	w.deliveredPayload = json.RawMessage(payload)
 	w.bindDestination()
 	w.outcome, w.err = w.sender.Process(w.ctx, w.record, nil)
-	return nil
 }
 
-func (w *deliveryWorld) deliverRecord() error {
+func (w *deliveryWorld) deliverRecord() {
 	w.deliveredPayload = w.record.Payload
 	w.bindDestination()
 	w.outcome, w.err = w.sender.Process(w.ctx, w.record, nil)
-	return nil
 }
 
-func outcomeByName(name string) (delivery.Outcome, error) {
-	switch name {
-	case "delivered":
-		return delivery.Delivered, nil
-	case "filtered":
-		return delivery.Filtered, nil
-	case "skipped":
-		return delivery.Skipped, nil
-	default:
-		return 0, fmt.Errorf("unknown outcome name %q", name)
-	}
-}
-
-func (w *deliveryWorld) outcomeAfterAttempts(name string, attempts int) error {
-	if w.err != nil {
-		return fmt.Errorf("expected outcome %q, got error: %w", name, w.err)
-	}
-	want, err := outcomeByName(name)
-	if err != nil {
-		return err
-	}
-	if w.outcome != want {
-		return fmt.Errorf("expected outcome %v, got %v", want, w.outcome)
-	}
+func (w *deliveryWorld) outcomeAfterAttempts(want delivery.Outcome, attempts int) {
+	w.t.Helper()
+	w.outcomeIs(want)
 	if got := len(w.requests); got != attempts {
-		return fmt.Errorf("expected %d attempts, got %d", attempts, got)
+		w.t.Fatalf("expected %d attempts, got %d", attempts, got)
 	}
-	return nil
 }
 
-func (w *deliveryWorld) outcomeIs(name string) error {
+func (w *deliveryWorld) outcomeIs(want delivery.Outcome) {
+	w.t.Helper()
 	if w.err != nil {
-		return fmt.Errorf("expected outcome %q, got error: %w", name, w.err)
-	}
-	want, err := outcomeByName(name)
-	if err != nil {
-		return err
+		w.t.Fatalf("expected outcome %v, got error: %v", want, w.err)
 	}
 	if w.outcome != want {
-		return fmt.Errorf("expected outcome %v, got %v", want, w.outcome)
+		w.t.Fatalf("expected outcome %v, got %v", want, w.outcome)
 	}
-	return nil
 }
 
-func (w *deliveryWorld) requestWasBasicJSONPost() error {
+func (w *deliveryWorld) requestWasBasicJSONPost() {
+	w.t.Helper()
 	if len(w.requests) == 0 {
-		return fmt.Errorf("no request recorded")
+		w.t.Fatalf("no request recorded")
 	}
 	r := w.requests[len(w.requests)-1]
 	if r.method != http.MethodPost {
-		return fmt.Errorf("expected POST, got %s", r.method)
+		w.t.Fatalf("expected POST, got %s", r.method)
 	}
 	if r.contentType != "application/json" {
-		return fmt.Errorf("expected Content-Type application/json, got %q", r.contentType)
+		w.t.Fatalf("expected Content-Type application/json, got %q", r.contentType)
 	}
 	if !r.basicOK || r.username != w.destination.Username || r.password != w.destination.Password {
-		return fmt.Errorf("expected Basic auth %s:%s, got ok=%v %s:%s", w.destination.Username, w.destination.Password, r.basicOK, r.username, r.password)
+		w.t.Fatalf("expected Basic auth %s:%s, got ok=%v %s:%s", w.destination.Username, w.destination.Password, r.basicOK, r.username, r.password)
 	}
-	return nil
 }
 
-func (w *deliveryWorld) requestBodyMatchesContractEnvelope() error {
+func (w *deliveryWorld) requestBodyMatchesContractEnvelope() {
+	w.t.Helper()
 	if len(w.requests) == 0 {
-		return fmt.Errorf("no request recorded")
+		w.t.Fatalf("no request recorded")
 	}
 	want, err := json.Marshal(protocol.Envelope{
 		DataSourceID:               w.source.ID,
@@ -321,44 +349,44 @@ func (w *deliveryWorld) requestBodyMatchesContractEnvelope() error {
 		Payload:                    w.deliveredPayload,
 	})
 	if err != nil {
-		return err
+		w.t.Fatal(err)
 	}
 	got := w.requests[len(w.requests)-1].body
 	if string(got) != string(want) {
-		return fmt.Errorf("request body = %s, want %s", got, want)
+		w.t.Fatalf("request body = %s, want %s", got, want)
 	}
-	return nil
 }
 
-func (w *deliveryWorld) everySleepBetween1And60() error {
+func (w *deliveryWorld) everySleepBetween1And60() {
+	w.t.Helper()
 	if len(w.sleeps) == 0 {
-		return fmt.Errorf("no sleeps recorded")
+		w.t.Fatalf("no sleeps recorded")
 	}
 	for _, d := range w.sleeps {
 		if d < time.Second || d > 60*time.Second {
-			return fmt.Errorf("sleep %v out of bounds [1s,60s]", d)
+			w.t.Fatalf("sleep %v out of bounds [1s,60s]", d)
 		}
 	}
-	return nil
 }
 
-func (w *deliveryWorld) deliveryFailedWithCancellation() error {
+func (w *deliveryWorld) deliveryFailedWithCancellation() {
+	w.t.Helper()
 	if !errors.Is(w.err, context.Canceled) {
-		return fmt.Errorf("expected context.Canceled, got %v", w.err)
+		w.t.Fatalf("expected context.Canceled, got %v", w.err)
 	}
-	return nil
 }
 
-func (w *deliveryWorld) outcomeIsZeroValue() error {
+func (w *deliveryWorld) outcomeIsZeroValue() {
+	w.t.Helper()
 	if w.outcome != 0 {
-		return fmt.Errorf("expected zero-value outcome, got %v", w.outcome)
+		w.t.Fatalf("expected zero-value outcome, got %v", w.outcome)
 	}
-	return nil
 }
 
-func (w *deliveryWorld) requestCarriedDiagnosticHeaders() error {
+func (w *deliveryWorld) requestCarriedDiagnosticHeaders() {
+	w.t.Helper()
 	if len(w.requests) == 0 {
-		return fmt.Errorf("no request recorded")
+		w.t.Fatalf("no request recorded")
 	}
 	got := w.requests[len(w.requests)-1].headers
 	checks := map[string]string{
@@ -372,17 +400,16 @@ func (w *deliveryWorld) requestCarriedDiagnosticHeaders() error {
 	}
 	for header, want := range checks {
 		if got := got.Get(header); got != want {
-			return fmt.Errorf("%s = %q, want %q", header, got, want)
+			w.t.Fatalf("%s = %q, want %q", header, got, want)
 		}
 	}
-	return nil
 }
 
-func (w *deliveryWorld) receiverRequestCountIs(n int) error {
+func (w *deliveryWorld) receiverRequestCountIs(n int) {
+	w.t.Helper()
 	if got := len(w.requests); got != n {
-		return fmt.Errorf("expected %d requests, got %d", n, got)
+		w.t.Fatalf("expected %d requests, got %d", n, got)
 	}
-	return nil
 }
 
 func (w *deliveryWorld) bindDestination() {

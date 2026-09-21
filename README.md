@@ -103,6 +103,47 @@ The operator API also lists subscriptions, pauses or resumes a destination, and
 reads recent activity. The routes are in
 [Delivery and operations](docs/specification.md#delivery-and-operations).
 
+## Use the published image
+
+Every pull request merged into `main` publishes a release for `linux/amd64`
+and `linux/arm64`.
+
+The first publication creates a private GHCR package. After that release,
+the maintainer must open the `postie` package's **Package settings**, choose
+**Change visibility** under **Danger Zone**, and select **Public**.
+This one-time setup enables the anonymous pull and Compose examples below.
+
+Once the package is public:
+
+```bash
+docker pull ghcr.io/rafaeelricco/postie:latest
+```
+
+In another project, mount your own engine and application configuration and
+point `--config` at it. Relative paths inside `postie.yaml` resolve against
+the container working directory, `/app`:
+
+```yaml
+services:
+  postie:
+    image: ghcr.io/rafaeelricco/postie:0.1.0
+    command: ["--config", "/app/config/postie.yaml"]
+    volumes:
+      - ./postie:/app/config:ro
+    environment:
+      POSTIE_OPERATOR_TOKEN: ${POSTIE_OPERATOR_TOKEN}
+      POSTIE_DATABASE_URL: ${POSTIE_DATABASE_URL}
+      POSTIE_CAPTURE_PASSWORD: ${POSTIE_CAPTURE_PASSWORD}
+      POSTIE_DELIVERY_PASSWORD: ${POSTIE_DELIVERY_PASSWORD}
+    ports: ["8081:8081"]
+```
+
+Set `application_config: ./config/application.yaml` in the mounted
+`postie.yaml`. Postie still needs Kafka, Kafka Connect with Debezium, and a
+control PostgreSQL database; [docker-compose.yml](docker-compose.yml) shows a
+working set. Run `postiectl` from the same image with
+`--entrypoint postiectl`.
+
 ## Delivery contract
 
 Postie sends a Basic-authenticated JSON `POST` with source and destination

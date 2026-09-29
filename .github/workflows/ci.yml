@@ -14,7 +14,7 @@ permissions:
 concurrency:
   group: ${{ github.event_name == 'pull_request_target' && 'postie-release' || format('ci-{0}', github.run_id) }}
   cancel-in-progress: false
-  queue: max # copied from job-kit-ai
+  queue: max
 
 jobs:
   checks:

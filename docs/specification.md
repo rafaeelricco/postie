@@ -58,7 +58,6 @@ settings, empty filters, missing configured columns, and unsupported types.
 
 `${NAME}` environment substitution applies to YAML string and duration values.
 Missing variables fail loading. Numeric fields require literal numeric values.
-Secrets are redacted from logs and stored configuration metadata.
 
 The operator API uses a separate bearer token. Set `POSTIE_OPERATOR_TOKEN` or
 configure `operator.token_file`. The Compose environment also uses
@@ -210,7 +209,7 @@ composition layer. All application packages are internal to the module
 ```mermaid
 flowchart TD
   commands[cmd/postie] --> app[app: composition and lifecycle]
-  app --> config[config: YAML and secrets]
+  app --> config[config: YAML and validation]
   app --> provision[provision: capture contracts]
   app --> control[control: desired and observed state]
   app --> delivery[delivery: processing and completion]
@@ -228,20 +227,20 @@ flowchart TD
 
 ### Package boundaries
 
-| Package              | Responsibility                                                                                  |
-| -------------------- | ----------------------------------------------------------------------------------------------- |
-| `internal/app`       | Builds adapters, maps configuration, starts workers and the operator API, and closes resources. |
-| `internal/config`    | Loads and validates YAML, applies defaults and environment substitution, and handles secrets.   |
-| `internal/stream`    | Defines sources, generations, immutable stream identities, capture names, and decoded records.  |
-| `internal/provision` | Validates source table contracts and provisions topics, connectors, slots, and publications.    |
-| `internal/control`   | Tracks desired subscriptions, worker observations, leases, readiness, and blocked streams.      |
-| `internal/delivery`  | Applies filters, retries, acknowledgements, durable skips, and ordered commits.                 |
-| `internal/protocol`  | Formats the HTTP envelope and converts PostgreSQL values; decodes acknowledgements and filters. |
-| `internal/adapters`  | Implements PostgreSQL, Kafka, Debezium Connect, HTTP delivery, and the operator API.            |
-| `internal/activity`  | Provides bounded structured activity and cursor-based reads.                                    |
+| Package              | Responsibility                                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `internal/app`       | Builds adapters, maps configuration, starts workers and the operator API, and closes resources.           |
+| `internal/config`    | Loads and validates YAML, applies defaults and environment substitution, and resolves the operator token. |
+| `internal/stream`    | Defines sources, generations, immutable stream identities, capture names, and decoded records.            |
+| `internal/provision` | Validates source table contracts and provisions topics, connectors, slots, and publications.              |
+| `internal/control`   | Tracks desired subscriptions, worker observations, leases, readiness, and blocked streams.                |
+| `internal/delivery`  | Applies filters, retries, acknowledgements, durable skips, and ordered commits.                           |
+| `internal/protocol`  | Formats the HTTP envelope and converts PostgreSQL values; decodes acknowledgements and filters.           |
+| `internal/adapters`  | Implements PostgreSQL, Kafka, Debezium Connect, HTTP delivery, and the operator API.                      |
+| `internal/activity`  | Provides bounded structured activity and cursor-based reads.                                              |
 
 Core packages depend on interfaces rather than database, broker, or HTTP
-clients. The architecture check in `make architecture` guards those dependency
+clients. `make test` runs the architecture check that guards those dependency
 boundaries.
 
 ### Runtime ownership
@@ -289,27 +288,6 @@ own test. `tests/architecture` checks dependency rules and the allowed direct
 modules. Integration tests in `tests/integration` use real PostgreSQL, Kafka,
 and Debezium through the root `docker-compose.yml`; see
 [Development topology](#development-topology).
-
-```text
-cmd/
-  postie/                   the postie binary: serve, config validate, provision
-docs/
-  specification.md
-examples/
-  application.yaml          source and destination definitions
-  postie.yaml               service, Kafka, and operator settings
-internal/
-  activity/                 bounded activity log
-  adapters/                 external systems and HTTP APIs
-  app/ config/ control/     composition, configuration, state
-  delivery/ protocol/       delivery rules and wire contract
-  provision/ stream/        capture and event identity
-tests/
-  architecture/             dependency rules and allowed modules
-  integration/              real PostgreSQL, Kafka, and Debezium
-Dockerfile                  the postie binary alone on scratch
-docker-compose.yml          development stack; the integration suite reuses it
-```
 
 ## Planned replay (not implemented)
 

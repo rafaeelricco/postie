@@ -8,7 +8,7 @@ comma       := ,
 empty       :=
 space       := $(empty) $(empty)
 
-.PHONY: lint test unit architecture fuzz cover mutation integration quality
+.PHONY: lint test fuzz cover mutation integration quality
 
 lint:
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -17,12 +17,6 @@ lint:
 
 test:
 	$(GO) test -count=1 -race ./...
-
-unit:
-	$(GO) test -count=1 ./internal/... ./cmd/...
-
-architecture:
-	$(GO) test -count=1 ./tests/architecture
 
 fuzz:
 	$(GO) test -run='^$$' -fuzz=FuzzDecodeAcknowledgement -fuzztime=$(FUZZTIME) ./internal/protocol

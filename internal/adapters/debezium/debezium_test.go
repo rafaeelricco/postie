@@ -540,3 +540,30 @@ func TestRegression_SnapshotTableIsQuoted(t *testing.T) {
 		t.Fatalf("snapshot override = %q, want %q", got, want)
 	}
 }
+
+// TestDecodeRejectsTrailingData pins that a valid envelope followed by more
+// JSON is still rejected now that a single Unmarshal does both the parse and
+// the trailing-data check. The error text is deliberately not asserted: only
+// the reject/accept behaviour is part of the contract.
+func TestDecodeRejectsTrailingData(t *testing.T) {
+	source, identity := testSourceAndIdentity()
+	const key = `{"partition_key":"p"}`
+	valid := `{"after":{"id":1,"partition_key":"p","c_int8":null,"c_float8":null,"c_bool":null,"c_json":"{}","c_bytea":"","c_timestamp":null,"c_timestamptz":null,"c_text":null},"source":{"schema":"public","table":"type_matrix"},"op":"c"}`
+
+	// Without this, an always-failing envelope would make the cases vacuous.
+	if _, err := Decode(source, identity, 1, testRecord(valid, key)); err != nil {
+		t.Fatalf("Decode() on the untouched envelope error = %v", err)
+	}
+
+	cases := []struct{ name, value string }{
+		{"trailing object", valid + `{"x":1}`},
+		{"trailing number", valid + ` 7`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Decode(source, identity, 1, testRecord(tc.value, key)); err == nil {
+				t.Fatal("Decode() error = nil, want trailing data rejection")
+			}
+		})
+	}
+}

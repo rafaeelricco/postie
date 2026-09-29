@@ -22,6 +22,7 @@ type Resources struct {
 	store     *controlpg.Store
 	kafka     *kafka.Admin
 	sources   map[string]stream.Source
+	pools     []*sourcepg.Client
 	scope     stream.Scope
 }
 
@@ -45,7 +46,8 @@ func (e *InitializationError) Error() string { return e.Err.Error() }
 
 // Bootstrap builds the adapters that provisioning and a running engine share.
 // It opens the Kafka admin client and the control store, which the caller
-// must Close; the per-source inspectors connect only when they are called.
+// must Close; the per-source pools are created here but connect lazily, on
+// the first inspection.
 func Bootstrap(ctx context.Context, engine config.Engine, application config.Application, generation stream.Generation) (*Resources, error) {
 	if !generation.Valid() {
 		return nil, fmt.Errorf("generation must be positive")
@@ -67,7 +69,9 @@ func Bootstrap(ctx context.Context, engine config.Engine, application config.App
 	for _, input := range application.Sources {
 		source, connection := Source(input), connectionOf(input)
 		resources.sources[source.ID] = source
-		inspectors[source.ID] = &sourcepg.Client{Source: source, Connection: connection}
+		client := sourcepg.Open(source, connection)
+		resources.pools = append(resources.pools, client)
+		inspectors[source.ID] = client
 		connections[source.ID] = debezium.Connection(connection) // one set of fields, so the two cannot drift
 		publications[source.ID] = engine.Sources[source.ID].Publication
 	}
@@ -84,8 +88,15 @@ func connectionOf(input config.Source) sourcepg.Connection {
 	return sourcepg.Connection{Host: input.Host, Port: input.Port, Username: input.Username, Password: input.Password, Database: input.Database}
 }
 
-// Close releases the Kafka admin client and control store connections.
-func (r *Resources) Close() { r.kafka.Close(); r.store.Close() }
+// Close releases the Kafka admin client, the control store, and every
+// source pool.
+func (r *Resources) Close() {
+	r.kafka.Close()
+	r.store.Close()
+	for _, pool := range r.pools {
+		pool.Close()
+	}
+}
 
 // Source maps the configuration boundary into the credential-free stream model.
 func Source(input config.Source) stream.Source {

@@ -195,7 +195,7 @@ func TestMatchesFilterFailsOpen(t *testing.T) {
 		want    bool
 	}{
 		{`{"event_name":"Created"}`, true}, {`{"event_name":"Deleted"}`, false},
-		{`{"other":1}`, true}, {`{"event_name":3}`, true}, {`"text"`, true}, {`{bad`, true},
+		{`{"other":1}`, true}, {`{"event_name":3}`, true}, {`{"event_name":null}`, true}, {`"text"`, true}, {`{bad`, true},
 	} {
 		if got := MatchesFilter(f, []byte(tc.payload)); got != tc.want {
 			t.Errorf("%s: got %v want %v", tc.payload, got, tc.want)

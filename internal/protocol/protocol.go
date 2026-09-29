@@ -98,13 +98,20 @@ func MatchesFilter(filter *Filter, payload json.RawMessage) bool {
 	if filter == nil {
 		return true
 	}
-	var object map[string]any
+	var object map[string]json.RawMessage
 	if json.Unmarshal(payload, &object) != nil {
 		return true
 	}
-	value, ok := object[filter.Column].(string)
+	raw, ok := object[filter.Column]
 	if !ok {
 		return true
 	}
-	return slices.Contains(filter.Values, value)
+	// A *string separates JSON null from a string: decoding null into a
+	// string succeeds and would silently compare "", so it must fail open
+	// like a number or an object does.
+	var value *string
+	if json.Unmarshal(raw, &value) != nil || value == nil {
+		return true
+	}
+	return slices.Contains(filter.Values, *value)
 }

@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/rafaeelricco/postie/internal/activity"
@@ -44,6 +43,9 @@ func (w *Worker) Process(ctx context.Context, raw *stream.RawRecord, commit Comm
 	entry := entryFor(record, w.Destination)
 	return completeRecord(ctx, storeRetryDelay, recordActions{
 		skipped: func(ctx context.Context) (bool, error) {
+			if !raw.Historical {
+				return false, nil
+			}
 			return w.Store.HasSkip(ctx, w.Scope, w.Destination, record)
 		},
 		send: func(ctx context.Context) (Outcome, error) { return w.send(ctx, record, entry) },
@@ -146,23 +148,11 @@ func sendAndAudit(ctx context.Context, delay time.Duration, actions recordAction
 
 // entryFor is the base entry shared by everything logged about one record.
 func entryFor(record stream.Record, destination string) activity.Entry {
-	aggregateID, eventName := businessIdentifiers(record.Payload)
 	return activity.Entry{
 		Source: record.Source.ID, Destination: destination, Generation: int(record.Generation),
 		Topic: record.Topic, Partition: record.Partition, Offset: record.Offset,
-		EventID: record.EventID, AggregateID: aggregateID, EventName: eventName,
+		EventID: record.EventID, AggregateID: record.AggregateID, EventName: record.EventName,
 	}
-}
-
-// businessIdentifiers reads the optional aggregate_id and event_name columns
-// so operators can search the log by them. Payloads without them yield "".
-func businessIdentifiers(payload json.RawMessage) (aggregateID, eventName string) {
-	var identifiers struct {
-		AggregateID string `json:"aggregate_id"`
-		EventName   string `json:"event_name"`
-	}
-	_ = json.Unmarshal(payload, &identifiers)
-	return identifiers.AggregateID, identifiers.EventName
 }
 
 func startedEntry(entry activity.Entry) activity.Entry {

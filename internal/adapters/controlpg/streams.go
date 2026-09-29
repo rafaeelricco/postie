@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-	streams "github.com/rafaeelricco/postie/internal/stream"
 	"reflect"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	streams "github.com/rafaeelricco/postie/internal/stream"
 )
 
 // GetStream looks up the registration for a source. The bool reports whether

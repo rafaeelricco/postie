@@ -11,95 +11,16 @@ import (
 	"time"
 
 	"github.com/rafaeelricco/postie/internal/activity"
-	"github.com/rafaeelricco/postie/internal/adapters/controlpg"
 	"github.com/rafaeelricco/postie/internal/adapters/debezium"
 	"github.com/rafaeelricco/postie/internal/adapters/httpdelivery"
 	"github.com/rafaeelricco/postie/internal/adapters/kafka"
 	"github.com/rafaeelricco/postie/internal/adapters/operator"
-	"github.com/rafaeelricco/postie/internal/adapters/sourcepg"
 	"github.com/rafaeelricco/postie/internal/config"
 	"github.com/rafaeelricco/postie/internal/control"
 	"github.com/rafaeelricco/postie/internal/delivery"
 	"github.com/rafaeelricco/postie/internal/protocol"
-	"github.com/rafaeelricco/postie/internal/provision"
 	"github.com/rafaeelricco/postie/internal/stream"
 )
-
-// Resources owns the adapters shared by provisioning and a running engine.
-type Resources struct {
-	Provision *provision.Service
-	Store     *controlpg.Store
-	Kafka     *kafka.Admin
-	Sources   map[string]stream.Source
-	Scope     stream.Scope
-}
-
-// Dependency names a startup dependency that can fail.
-type Dependency string
-
-const (
-	DependencyKafka   Dependency = "Kafka"
-	DependencyControl Dependency = "control"
-)
-
-// InitializationError preserves the command-specific startup diagnostics while
-// keeping adapter construction in the composition layer.
-type InitializationError struct {
-	Dependency Dependency
-	Err        error
-}
-
-// Error returns the wrapped error's message.
-func (e *InitializationError) Error() string { return e.Err.Error() }
-
-// Bootstrap builds the adapters that provisioning and a running engine share.
-// It opens the Kafka admin client and the control store, which the caller
-// must Close; the per-source inspectors connect only when they are called.
-func Bootstrap(ctx context.Context, engine config.Engine, application config.Application, generation stream.Generation) (*Resources, error) {
-	if !generation.Valid() {
-		return nil, fmt.Errorf("generation must be positive")
-	}
-	admin, err := kafka.NewAdmin(engine.Kafka.Brokers)
-	if err != nil {
-		return nil, &InitializationError{Dependency: DependencyKafka, Err: err}
-	}
-	store, err := controlpg.Open(ctx, engine.Control.DatabaseURL)
-	if err != nil {
-		admin.Close()
-		return nil, &InitializationError{Dependency: DependencyControl, Err: err}
-	}
-	scope := stream.Scope{Namespace: engine.Namespace, Environment: engine.Environment, Generation: generation}
-	resources := &Resources{Store: store, Kafka: admin, Scope: scope, Sources: map[string]stream.Source{}}
-	inspectors := map[string]provision.Source{}
-	connections := map[string]debezium.Connection{}
-	publications := map[string]string{}
-	for _, input := range application.Sources {
-		source, connection := Source(input), connectionOf(input)
-		resources.Sources[source.ID] = source
-		inspectors[source.ID] = &sourcepg.Client{Source: source, Connection: connection}
-		connections[source.ID] = debezium.Connection(connection) // one set of fields, so the two cannot drift
-		publications[source.ID] = engine.Sources[source.ID].Publication
-	}
-	resources.Provision = &provision.Service{
-		Scope: scope, Partitions: engine.Kafka.Partitions, Replication: engine.Kafka.ReplicationFactor,
-		Publications: publications, Sources: inspectors, Topics: admin, Store: store,
-		Connectors: &debezium.Client{URL: engine.Connect.URL, HTTP: &http.Client{Timeout: 30 * time.Second}, Connections: connections},
-	}
-	return resources, nil
-}
-
-// connectionOf picks the database connection settings out of a source.
-func connectionOf(input config.Source) sourcepg.Connection {
-	return sourcepg.Connection{Host: input.Host, Port: input.Port, Username: input.Username, Password: input.Password, Database: input.Database}
-}
-
-// Close releases the Kafka admin client and control store connections.
-func (r *Resources) Close() { r.Kafka.Close(); r.Store.Close() }
-
-// Source maps the configuration boundary into the credential-free stream model.
-func Source(input config.Source) stream.Source {
-	return stream.Source{ID: input.ID, Description: input.Description, Table: input.Table, Columns: append([]string(nil), input.Columns...), SerialColumn: input.SerialColumn, PartitioningColumn: input.PartitioningColumn}
-}
 
 // App owns a running control service and its adapter lifetimes.
 type App struct {
@@ -120,13 +41,12 @@ func New(ctx context.Context, engine config.Engine, application config.Applicati
 		engine:       engine,
 		resources:    resources,
 		destinations: destinationsByID(application.Destinations),
-		generation:   generation,
 		log:          activity.New(writer),
 	}
 	service, err := control.New(ctx, control.Options{
-		Scope: resources.Scope, Sources: orderedSources(application.Sources, resources.Sources),
+		Scope: resources.scope, Sources: orderedSources(application.Sources, resources.sources),
 		Destinations: controlDestinations(application.Destinations),
-		Store:        resources.Store, Monitor: resources.Provision, Consumers: w.consumer, Kafka: resources.Kafka, Log: w.log,
+		Store:        resources.store, Monitor: resources.provision, Consumers: w.consumer, Kafka: resources.kafka, Log: w.log,
 	})
 	if err != nil {
 		resources.Close()
@@ -188,12 +108,11 @@ func filterFor(input *config.Filter) *protocol.Filter {
 
 // wiring holds what the per-destination consumer and worker factories close
 // over: the shared engine config and adapters, destination-keyed delivery
-// settings, the stream generation, and the activity log.
+// settings, and the activity log.
 type wiring struct {
 	engine       config.Engine
 	resources    *Resources
 	destinations map[string]config.Destination
-	generation   stream.Generation
 	log          *activity.Log
 }
 
@@ -205,18 +124,18 @@ func (w wiring) consumer(ctx context.Context, destination control.Destination, r
 	topics := map[string]stream.Source{}
 	workers := map[string]*delivery.Worker{}
 	for _, id := range destination.Sources {
-		source := w.resources.Sources[id]
+		source := w.resources.sources[id]
 		registration := registered[id]
 		topics[registration.Names.Topic] = source
 		workers[registration.Names.Topic] = w.worker(input, source, registration, dispatch)
 	}
 	return kafka.NewConsumer(ctx, kafka.ConsumerOptions{
 		Brokers:     w.engine.Kafka.Brokers,
-		Scope:       w.resources.Scope,
+		Scope:       w.resources.scope,
 		Destination: destination.ID,
 		Sources:     topics,
-		Admin:       w.resources.Kafka,
-		Store:       w.resources.Store,
+		Admin:       w.resources.kafka,
+		Store:       w.resources.store,
 		Dispatch:    dispatch,
 		Log:         w.log,
 		Process: func(ctx context.Context, raw *stream.RawRecord, commit kafka.CommitFunc) error {
@@ -241,10 +160,10 @@ func (w wiring) worker(input config.Destination, source stream.Source, registrat
 	return &delivery.Worker{
 		Processor: delivery.NewProcessor(destination, client),
 		Decode: func(raw *stream.RawRecord) (stream.Record, error) {
-			return debezium.Decode(source, registration.Identity, w.generation, raw)
+			return debezium.Decode(source, registration.Identity, w.resources.scope.Generation, raw)
 		},
-		Store:       w.resources.Store,
-		Scope:       w.resources.Scope,
+		Store:       w.resources.store,
+		Scope:       w.resources.scope,
 		Destination: input.ID,
 		SourceID:    source.ID,
 		Gate:        dispatch,

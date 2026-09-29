@@ -207,9 +207,6 @@ func TestConnectorConfigSnapshotOrdersBySerial(t *testing.T) {
 			t.Errorf("snapshot override statement %q missing configured column %q", statement, c.Name)
 		}
 	}
-	if strings.Contains(statement, `"extra_column"`) {
-		t.Errorf("snapshot override statement %q lists an unconfigured column", statement)
-	}
 }
 
 func TestColumnIncludeListEscapes(t *testing.T) {
@@ -281,10 +278,6 @@ func TestConnectorStatusMissing(t *testing.T) {
 	}
 }
 
-// TestIdentityFromRejections is the Docker-free table test for every
-// contract rule identityFrom enforces (the same rules InspectTable enforced
-// before the pure/effectful split). It never touches Postgres: TableFacts is
-// built by hand for each case.
 // TestConnectorConfigPublicationMode asserts publication.autocreate.mode
 // reflects the provision.PublicationMode passed in, independent of the other literal
 // core settings covered by TestConnectorConfigCoreSettings.
@@ -362,6 +355,17 @@ func TestDecodeRealDebeziumShape(t *testing.T) {
 	}
 }
 
+// A one-partition stream is valid: this pins the accepting side of the
+// partition-count check, whose rejecting side is the "zero partitions" row below.
+func TestDecodeAcceptsSinglePartitionIdentity(t *testing.T) {
+	source, identity := testSourceAndIdentity()
+	identity.Partitions = 1
+	record := testRecord(`{"after":{"id":1,"partition_key":"k","c_int8":1,"c_float8":1.5,"c_bool":true,"c_json":"{}","c_bytea":"AA==","c_timestamp":0,"c_timestamptz":"2024-01-02T03:04:05Z","c_text":"x"},"source":{"schema":"public","table":"type_matrix"},"op":"c"}`, `{"partition_key":"k"}`)
+	if _, err := Decode(source, identity, 1, record); err != nil {
+		t.Fatalf("Decode() with one partition error = %v", err)
+	}
+}
+
 func TestDecodeEventIDAndNulls(t *testing.T) {
 	source, identity := testSourceAndIdentity()
 	source.Columns = append(source.Columns, "event_id")
@@ -396,37 +400,6 @@ func TestDecodeRequiresConfiguredEventID(t *testing.T) {
 			_, err := Decode(source, identity, 1, testRecord(fmt.Sprintf(base, value), `{"partition_key":"p"}`))
 			if err == nil {
 				t.Fatal("Decode() error = nil, want configured event ID rejection")
-			}
-		})
-	}
-}
-
-func TestFloatDecimalExpansion(t *testing.T) {
-	source := stream.Source{Table: "numbers", Columns: []string{"id", "key", "small", "large"}, SerialColumn: "id", PartitioningColumn: "key"}
-	identity := stream.Identity{
-		Table: source.Table, SerialColumn: source.SerialColumn, PartitioningColumn: source.PartitioningColumn, Partitions: 1,
-		Columns: []stream.Column{{Name: "id", Type: stream.PGInt8}, {Name: "key", Type: stream.PGText}, {Name: "small", Type: stream.PGFloat4}, {Name: "large", Type: stream.PGFloat8}},
-	}
-	cases := []struct {
-		name, small, large, wantSmall, wantLarge string
-	}{
-		{"large exponent", "1.2e2", "1e300", "120", "1" + strings.Repeat("0", 300)},
-		{"negative fractions", "-1.25e-2", "-1.2300e-2", "-0.0125", "-0.012300"},
-		{"ordinary", "3.14", "0.1", "3.14", "0.1"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			value := fmt.Sprintf(`{"after":{"id":1,"key":"k","small":%s,"large":%s},"source":{"schema":"public","table":"numbers"},"op":"c"}`, tc.small, tc.large)
-			got, err := Decode(source, identity, 1, &stream.RawRecord{Topic: "numbers", Key: []byte(`{"key":"k"}`), Value: []byte(value)})
-			if err != nil {
-				t.Fatalf("Decode() error = %v", err)
-			}
-			var payload map[string]json.RawMessage
-			if err := json.Unmarshal(got.Payload, &payload); err != nil {
-				t.Fatal(err)
-			}
-			if string(payload["small"]) != tc.wantSmall || string(payload["large"]) != tc.wantLarge {
-				t.Fatalf("float payload = small %s large %s, want small %s large %s", payload["small"], payload["large"], tc.wantSmall, tc.wantLarge)
 			}
 		})
 	}

@@ -17,14 +17,31 @@ import (
 	streams "github.com/rafaeelricco/postie/internal/stream"
 )
 
-func TestControlStorePersistsSafeRestartState(t *testing.T) {
-	ctx := context.Background()
-	store, err := controlpg.Open(ctx, controlConnString())
+// newStore opens the control store, closes it when the test ends, and returns
+// it with a scope in a namespace no other test shares.
+func newStore(t *testing.T) (*controlpg.Store, streams.Scope) {
+	t.Helper()
+	store, err := controlpg.Open(context.Background(), controlConnString())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	scope := streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 1}
+	t.Cleanup(store.Close)
+	return store, streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 1}
+}
+
+// assertObserved fails the test unless SubscriptionObserved reports want for
+// the destination's revision and state.
+func assertObserved(t *testing.T, store *controlpg.Store, scope streams.Scope, id string, revision int64, state string, want bool) {
+	t.Helper()
+	observed, err := store.SubscriptionObserved(context.Background(), scope, id, revision, state)
+	if err != nil || observed != want {
+		t.Fatalf("SubscriptionObserved(%q, revision %d, %q) = %v, %v; want %v", id, revision, state, observed, err, want)
+	}
+}
+
+func TestControlStorePersistsSafeRestartState(t *testing.T) {
+	ctx := context.Background()
+	store, scope := newStore(t)
 	stream := streams.Registration{
 		SourceID: "source",
 		Identity: streams.Identity{Table: "events", Partitions: 3, Columns: []streams.Column{{Name: "id", Type: streams.PGInt8}}},
@@ -92,12 +109,7 @@ func TestControlStorePersistsSafeRestartState(t *testing.T) {
 
 func TestControlSubscriptionObservedWaitsForEveryWorker(t *testing.T) {
 	ctx := context.Background()
-	store, err := controlpg.Open(ctx, controlConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	scope := streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 1}
+	store, scope := newStore(t)
 	if err := store.EnsureSubscriptions(ctx, scope, []string{"destination"}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,31 +125,20 @@ func TestControlSubscriptionObservedWaitsForEveryWorker(t *testing.T) {
 	if err := store.ObserveSubscription(ctx, scope, "worker-a", "destination", desired.Revision, "paused"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", desired.Revision, "paused"); err != nil || observed {
-		t.Fatalf("one worker observed = %v, %v; expected pending", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", desired.Revision, "paused", false) // one worker observed; expected pending
 	if err := store.ObserveSubscription(ctx, scope, "worker-b", "destination", desired.Revision, "running"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", desired.Revision, "paused"); err != nil || observed {
-		t.Fatalf("mismatching worker observed = %v, %v; expected pending", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", desired.Revision, "paused", false) // mismatching worker; expected pending
 	if err := store.ObserveSubscription(ctx, scope, "worker-b", "destination", desired.Revision, "paused"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", desired.Revision, "paused"); err != nil || !observed {
-		t.Fatalf("both workers observed = %v, %v; expected complete", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", desired.Revision, "paused", true) // both workers observed; expected complete
 }
 
 func TestControlSubscriptionObservedExcludesExpiredWorker(t *testing.T) {
 	ctx := context.Background()
-	store, err := controlpg.Open(ctx, controlConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	scope := streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 1}
+	store, scope := newStore(t)
 	if err := store.EnsureSubscriptions(ctx, scope, []string{"destination"}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,19 +155,12 @@ func TestControlSubscriptionObservedExcludesExpiredWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(150 * time.Millisecond)
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", 1, "paused"); err != nil || !observed {
-		t.Fatalf("expired worker remains blocking: observed=%v err=%v", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", 1, "paused", true) // an expired worker must not keep blocking
 }
 
 func TestControlSubscriptionObservedRequiresMatchingRevisionAndState(t *testing.T) {
 	ctx := context.Background()
-	store, err := controlpg.Open(ctx, controlConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	scope := streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 1}
+	store, scope := newStore(t)
 	if err := store.EnsureSubscriptions(ctx, scope, []string{"destination"}); err != nil {
 		t.Fatal(err)
 	}
@@ -180,9 +174,7 @@ func TestControlSubscriptionObservedRequiresMatchingRevisionAndState(t *testing.
 	if err := store.ObserveSubscription(ctx, scope, "worker", "destination", first.Revision, "running"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", first.Revision, "running"); err != nil || !observed {
-		t.Fatalf("initial observation = %v, %v; expected complete", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", first.Revision, "running", true) // initial observation; expected complete
 	second, err := store.SetDesired(ctx, scope, "destination", "paused")
 	if err != nil {
 		t.Fatal(err)
@@ -190,31 +182,20 @@ func TestControlSubscriptionObservedRequiresMatchingRevisionAndState(t *testing.
 	if second.Revision <= first.Revision {
 		t.Fatalf("revision did not advance: first=%d second=%d", first.Revision, second.Revision)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", second.Revision, "paused"); err != nil || observed {
-		t.Fatalf("new revision without observation = %v, %v; expected pending", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", second.Revision, "paused", false) // new revision without observation; expected pending
 	if err := store.ObserveSubscription(ctx, scope, "worker", "destination", second.Revision, "running"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", second.Revision, "paused"); err != nil || observed {
-		t.Fatalf("mismatching state = %v, %v; expected pending", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", second.Revision, "paused", false) // mismatching state; expected pending
 	if err := store.ObserveSubscription(ctx, scope, "worker", "destination", second.Revision, "paused"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", second.Revision, "paused"); err != nil || !observed {
-		t.Fatalf("matching new revision = %v, %v; expected complete", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", second.Revision, "paused", true) // matching new revision; expected complete
 }
 
 func TestControlReleaseLeaseExcludesWorkerAndObservations(t *testing.T) {
 	ctx := context.Background()
-	store, err := controlpg.Open(ctx, controlConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	scope := streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 1}
+	store, scope := newStore(t)
 	if err := store.EnsureSubscriptions(ctx, scope, []string{"destination"}); err != nil {
 		t.Fatal(err)
 	}
@@ -226,31 +207,20 @@ func TestControlReleaseLeaseExcludesWorkerAndObservations(t *testing.T) {
 	if err := store.ObserveSubscription(ctx, scope, "kept", "destination", 1, "paused"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", 1, "paused"); err != nil || observed {
-		t.Fatalf("released worker before release = %v, %v; expected pending", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", 1, "paused", false) // released worker before release; expected pending
 	if err := store.ReleaseLease(ctx, scope, "released"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", 1, "paused"); err != nil || !observed {
-		t.Fatalf("released worker after release = %v, %v; expected complete", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", 1, "paused", true) // released worker after release; expected complete
 	if err := store.RenewLease(ctx, scope, "released", 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", 1, "paused"); err != nil || observed {
-		t.Fatalf("released worker observation was retained = %v, %v; expected pending", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", 1, "paused", false) // released worker observation was retained; expected pending
 }
 
 func TestControlNewWorkerMustObserveAndReleaseRemovesObservation(t *testing.T) {
 	ctx := context.Background()
-	store, err := controlpg.Open(ctx, controlConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	scope := streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 1}
+	store, scope := newStore(t)
 	if err := store.EnsureSubscriptions(ctx, scope, []string{"destination"}); err != nil {
 		t.Fatal(err)
 	}
@@ -263,24 +233,18 @@ func TestControlNewWorkerMustObserveAndReleaseRemovesObservation(t *testing.T) {
 			t.Fatal(err)
 		}
 		if worker == "joined" {
-			if observed, err := store.SubscriptionObserved(ctx, scope, "destination", desired.Revision, "paused"); err != nil || observed {
-				t.Fatalf("new live worker must hold convergence: observed=%v err=%v", observed, err)
-			}
+			assertObserved(t, store, scope, "destination", desired.Revision, "paused", false) // new live worker must hold convergence
 		}
 		if err := store.ObserveSubscription(ctx, scope, worker, "destination", desired.Revision, "paused"); err != nil {
 			t.Fatal(err)
 		}
-		if observed, err := store.SubscriptionObserved(ctx, scope, "destination", desired.Revision, "paused"); err != nil || !observed {
-			t.Fatalf("all live workers observed: observed=%v err=%v", observed, err)
-		}
+		assertObserved(t, store, scope, "destination", desired.Revision, "paused", true) // all live workers observed
 	}
 	// An older update cannot overwrite the acknowledged revision.
 	if err := store.ObserveSubscription(ctx, scope, "joined", "destination", desired.Revision-1, "running"); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", desired.Revision, "paused"); err != nil || !observed {
-		t.Fatalf("stale observation replaced current state: observed=%v err=%v", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", desired.Revision, "paused", true) // a stale observation must not replace the current state
 	if err := store.ReleaseLease(ctx, scope, "joined"); err != nil {
 		t.Fatal(err)
 	}
@@ -299,30 +263,22 @@ func TestControlNewWorkerMustObserveAndReleaseRemovesObservation(t *testing.T) {
 	if err := store.RenewLease(ctx, scope, "joined", time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if observed, err := store.SubscriptionObserved(ctx, scope, "destination", desired.Revision, "paused"); err != nil || observed {
-		t.Fatalf("rejoined worker reused a released observation: observed=%v err=%v", observed, err)
-	}
+	assertObserved(t, store, scope, "destination", desired.Revision, "paused", false) // a rejoined worker must not reuse a released observation
 }
 
 func TestControlReopenPreservesRegistrationAndDesiredState(t *testing.T) {
 	ctx := context.Background()
-	store, err := controlpg.Open(ctx, controlConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := streams.Scope{Namespace: UniqueNamespace(t), Environment: "integration", Generation: 2}
+	store, scope := newStore(t)
+	scope.Generation = 2
 	registered := streams.Registration{SourceID: "events", Identity: streams.Identity{Table: "events", Partitions: 2, Columns: []streams.Column{{Name: "id", Type: streams.PGInt8}}}, Names: streams.Names{Topic: "existing-topic", Connector: "existing-connector", Slot: "existing-slot", Publication: "existing-publication"}, TopicID: [16]byte{1, 9}, Blocked: "history lost"}
 	if err := store.RegisterStream(ctx, scope, registered); err != nil {
-		store.Close()
 		t.Fatal(err)
 	}
 	if err := store.EnsureSubscriptions(ctx, scope, []string{"destination"}); err != nil {
-		store.Close()
 		t.Fatal(err)
 	}
 	desired, err := store.SetDesired(ctx, scope, "destination", "paused")
 	if err != nil {
-		store.Close()
 		t.Fatal(err)
 	}
 	store.Close()

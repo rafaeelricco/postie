@@ -10,21 +10,6 @@ import (
 	"time"
 )
 
-// repoRoot returns the repository root, two levels above this test file
-// (cmd/postie).
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return root
-}
-
 func TestUsageOnUnknownSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"bogus"}, &stdout, &stderr)
@@ -47,18 +32,7 @@ func TestConfigValidate(t *testing.T) {
 	// examples/postie.yaml's application_config is a relative path
 	// ("./examples/application.yaml"), interpreted relative to the
 	// process's working directory, so run it from the repo root.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoRoot(t)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chdir(wd); err != nil {
-			t.Fatal(err)
-		}
-	})
+	t.Chdir("../..")
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"config", "validate", "--config", "examples/postie.yaml"}, &stdout, &stderr)

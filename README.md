@@ -185,22 +185,19 @@ make lint test
 
 Use the focused checks when you change a specific area:
 
-| Check               | Command             | Covers                                                      |
-| ------------------- | ------------------- | ----------------------------------------------------------- |
-| Lint and unit tests | `make lint test`    | Formatting, `go vet`, race-enabled tests.                   |
-| Unit tests only     | `make unit`         | The tests beside each package in `internal/` and `cmd/`.    |
-| Package boundaries  | `make architecture` | Allowed dependency direction and direct modules.            |
-| Coverage            | `make cover`        | Coverage for gated packages; default floor is 90%.          |
-| Mutation checks     | `make mutation`     | Mutation efficacy for gated packages; default floor is 90%. |
-| Full quality set    | `make quality`      | Lint, coverage, and mutation checks.                        |
-| Integration         | `make integration`  | PostgreSQL, Kafka, Kafka Connect, and HTTP delivery.        |
-| Fuzzing             | `make fuzz`         | Acknowledgements, filters, and Debezium decoding.           |
+| Check            | Command            | Covers                                                      |
+| ---------------- | ------------------ | ----------------------------------------------------------- |
+| Lint and tests   | `make lint test`   | Formatting, `go vet`, race tests, and boundary checks.      |
+| Coverage         | `make cover`       | Coverage for gated packages; default floor is 90%.          |
+| Mutation checks  | `make mutation`    | Mutation efficacy for gated packages; default floor is 90%. |
+| Full quality set | `make quality`     | Lint, coverage, and mutation checks.                        |
+| Integration      | `make integration` | PostgreSQL, Kafka, Kafka Connect, and HTTP delivery.        |
+| Fuzzing          | `make fuzz`        | Acknowledgements, filters, and Debezium decoding.           |
 
-The gated packages are `internal/{config,stream,protocol,provision,delivery,control,activity}`
-and `internal/adapters/{operator,httpdelivery,debezium}`. Kafka, control
-database, and source database adapters rely on the integration stack for their
-external behavior. `internal/app` composes adapters without owning business
-rules.
+The gated packages are listed in the `GATED` variable of the
+[Makefile](Makefile). Kafka, control database, and source database adapters
+rely on the integration stack for their external behavior. `internal/app`
+composes adapters without owning business rules.
 
 The main code areas are `internal/config`, `internal/protocol`,
 `internal/delivery`, `internal/adapters/debezium`, `internal/provision`,
@@ -212,7 +209,7 @@ subcommands.
 ### Where tests belong
 
 - Each package's tests live beside the code in `<pkg>_test.go`, including
-  `cmd/postie`. They run with `make test`, or alone with `make unit`. Fuzz
+  `cmd/postie`. They run with `make test`. Fuzz
   tests cover untrusted protocol values and Debezium decoding and run with
   `make fuzz`.
 - Architecture tests are in `tests/architecture`. They reject forbidden
@@ -223,7 +220,7 @@ subcommands.
 ### Rules
 
 - Tests use only the standard library. A new direct module fails
-  `make architecture` until it is added to `allowedModules` in
+  `make test` until it is added to `allowedModules` in
   `tests/architecture/architecture_test.go`, in the same change, with the
   reason in the commit message.
 - When a new package can be tested offline, add it to `GATED` in the Makefile
@@ -234,11 +231,9 @@ subcommands.
 ### Integration project
 
 The integration suite runs [docker-compose.yml](docker-compose.yml) as its own
-`postie-integration` Compose project. `POSTIE_SOURCE_PORT`,
-`POSTIE_CONTROL_PORT`, `POSTIE_KAFKA_PORT`, and `POSTIE_CONNECT_PORT` move its
-ports to 25432, 25433, 39092, and 28083. It can run beside the development
-stack, but run only one integration suite at a time. Set `POSTIE_KEEP=1` to
-keep the integration containers and volumes for inspection.
+`postie-integration` Compose project on separate ports, so it can run beside
+the development stack. Run only one integration suite at a time. Ports and
+`POSTIE_KEEP` are in [Development topology](docs/specification.md#development-topology).
 
 ### CI and releases
 

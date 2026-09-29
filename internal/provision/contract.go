@@ -76,9 +76,7 @@ type Status struct {
 // SlotStatus is the health of a PostgreSQL logical replication slot.
 type SlotStatus struct {
 	Exists    bool
-	Active    bool
 	WALStatus WALStatus
-	LagBytes  int64
 }
 
 // WALStatus is pg_replication_slots.wal_status.

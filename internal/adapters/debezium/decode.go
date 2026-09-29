@@ -42,7 +42,7 @@ func Decode(source stream.Source, identity stream.Identity, generation stream.Ge
 	}
 	return stream.Record{
 		Source: source, Payload: payload, EventID: eventID, Generation: generation,
-		Topic: record.Topic, Partition: record.Partition, Offset: record.Offset, LeaderEpoch: record.LeaderEpoch,
+		Topic: record.Topic, Partition: record.Partition, Offset: record.Offset,
 	}, nil
 }
 

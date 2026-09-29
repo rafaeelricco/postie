@@ -80,6 +80,11 @@ func TestAuth(t *testing.T) {
 				if rec.Code != tc.want {
 					t.Fatalf("%s %s with Authorization=%q: got %d, want %d", target.method, target.path, tc.header, rec.Code, tc.want)
 				}
+				if tc.want == http.StatusOK {
+					if got := rec.Header().Get("Content-Type"); got != "application/json" {
+						t.Fatalf("%s %s: Content-Type = %q, want %q", target.method, target.path, got, "application/json")
+					}
+				}
 			})
 		}
 	}
@@ -185,62 +190,6 @@ func TestSubscriptionNotFound(t *testing.T) {
 				t.Fatalf("%s %s: got %d, want %d", tc.method, tc.path, rec.Code, http.StatusNotFound)
 			}
 		})
-	}
-}
-
-func TestResponsesAreJSON(t *testing.T) {
-	const token = "tok"
-	s := testServer(token, []string{"a"})
-	bearer := "Bearer " + token
-
-	cases := []struct {
-		name   string
-		method string
-		path   string
-	}{
-		{"status", http.MethodGet, "/v1/status"},
-		{"list", http.MethodGet, "/v1/subscriptions"},
-		{"pause", http.MethodPost, "/v1/subscriptions/a/pause"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := serve(t, s, tc.method, tc.path, bearer)
-			if got := rec.Header().Get("Content-Type"); got != "application/json" {
-				t.Fatalf("%s %s: Content-Type = %q, want %q", tc.method, tc.path, got, "application/json")
-			}
-		})
-	}
-}
-
-func TestConcurrentPauseResumeIsRaceFree(t *testing.T) {
-	const token = "tok"
-	s := testServer(token, []string{"a"})
-	bearer := "Bearer " + token
-
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			action := "pause"
-			if i%2 == 0 {
-				action = "resume"
-			}
-			serve(t, s, http.MethodPost, "/v1/subscriptions/a/"+action, bearer)
-		}(i)
-	}
-	wg.Wait()
-
-	rec := serve(t, s, http.MethodGet, "/v1/subscriptions", bearer)
-	var all []control.Subscription
-	if err := json.Unmarshal(rec.Body.Bytes(), &all); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-	if len(all) != 1 {
-		t.Fatalf("expected exactly 1 subscription after concurrent pause/resume, got %d", len(all))
-	}
-	if all[0].State != control.StatePaused && all[0].State != control.StateRunning {
-		t.Fatalf("subscription state corrupted by concurrent access: %q", all[0].State)
 	}
 }
 

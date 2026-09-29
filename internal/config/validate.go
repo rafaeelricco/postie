@@ -156,22 +156,5 @@ func (c Engine) check() error {
 	if c.Control.DatabaseURL == "" {
 		return fmt.Errorf("control.database_url is required")
 	}
-	for id, policy := range c.Destinations {
-		if err := validatePolicy(id, policy); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validatePolicy rejects an unknown kind, and a replay endpoint on a reaction:
-// reactions cause side effects, so they are never replayed.
-func validatePolicy(id string, policy DestinationPolicy) error {
-	if policy.Kind != KindProjection && policy.Kind != KindReaction {
-		return fmt.Errorf("destination %q: kind must be \"projection\" or \"reaction\", got %q", id, policy.Kind)
-	}
-	if policy.Kind == KindReaction && policy.ReplayEndpoint != "" {
-		return fmt.Errorf("destination %q: reaction destinations must not set replay_endpoint", id)
-	}
 	return nil
 }

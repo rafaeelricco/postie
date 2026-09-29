@@ -40,15 +40,15 @@ const (
 	replication = 1
 )
 
-func provision(t *testing.T, table string) (hostSrc, containerSrc config.Source, id streams.Identity, names streams.Names) {
+func provision(t *testing.T, table string) (hostSrc config.Source, id streams.Identity, names streams.Names) {
 	t.Helper()
 	return provisionSource(t, HostSource(table))
 }
 
-func provisionSource(t *testing.T, source config.Source) (hostSrc, containerSrc config.Source, id streams.Identity, names streams.Names) {
+func provisionSource(t *testing.T, source config.Source) (hostSrc config.Source, id streams.Identity, names streams.Names) {
 	t.Helper()
 	hostSrc = source
-	containerSrc = source
+	containerSrc := source
 	containerSrc.Host = containerPostgresHost
 	containerSrc.Port = containerPostgresPort
 
@@ -72,7 +72,7 @@ func provisionSource(t *testing.T, source config.Source) (hostSrc, containerSrc 
 	}
 
 	waitConnectorRunning(t, names.Connector, 90*time.Second)
-	return hostSrc, containerSrc, id, names
+	return hostSrc, id, names
 }
 
 func allRunning(states []provisioning.ConnectorState) bool {
@@ -159,7 +159,7 @@ func TestSnapshotThenLiveInSerialOrder(t *testing.T) {
 	correlationIDs := []string{"corr-a", "corr-b", "corr-c"}
 	seeded := InsertEvents(t, table, 200, correlationIDs...)
 
-	_, _, _, names := provision(t, table)
+	_, _, names := provision(t, table)
 
 	live := InsertEvents(t, table, 200, correlationIDs...)
 
@@ -197,7 +197,7 @@ func TestKeyIsPartitioningColumn(t *testing.T) {
 	correlationIDs := []string{"key-a", "key-b", "key-c"}
 	ids := InsertEvents(t, table, 30, correlationIDs...)
 
-	_, _, _, names := provision(t, table)
+	_, _, names := provision(t, table)
 
 	records := ConsumeAll(t, names.Topic, len(ids), 90*time.Second)
 
@@ -237,7 +237,7 @@ func TestDelayedCommitIsCaptured(t *testing.T) {
 	table := UniqueNamespace(t)
 	CreateEventTable(t, table)
 
-	_, _, _, names := provision(t, table)
+	_, _, names := provision(t, table)
 
 	ctx := context.Background()
 	connA := SourceDB(t)
@@ -446,7 +446,7 @@ func TestTopicConfig(t *testing.T) {
 	}
 	// Our test cluster is single-broker, so replication factor 3 (which is
 	// what turns on min.insync.replicas=2) cannot be exercised here; that
-	// branch is only reachable with replication>=3, see kafka/topics.go's
+	// branch is only reachable with replication>=3, see kafka/admin.go's
 	// topicConfigs. At replication 1, EnsureTopic must not have set it
 	// explicitly (the cluster default still shows up in the describe, but
 	// its Source must not be DYNAMIC_TOPIC_CONFIG).
@@ -568,7 +568,7 @@ func TestNullableSQLJSONSnapshotAndLiveDelivery(t *testing.T) {
 	source.Columns = []string{"id", "correlation_id", "json_value"}
 	source.SerialColumn = "id"
 	source.PartitioningColumn = "correlation_id"
-	_, _, identity, names := provisionSource(t, source)
+	_, identity, names := provisionSource(t, source)
 
 	store, err := controlpg.Open(context.Background(), controlConnString())
 	if err != nil {
@@ -809,7 +809,7 @@ func TestRegression_MixedCaseSnapshot(t *testing.T) {
 	quoted := (pgx.Identifier{table}).Sanitize()
 	CreateEventTable(t, quoted)
 	ids := InsertEvents(t, quoted, 1)
-	_, _, _, names := provision(t, table)
+	_, _, names := provision(t, table)
 	records := ConsumeAll(t, names.Topic, len(ids), 90*time.Second)
 	if len(records) != 1 {
 		t.Fatalf("got %d records, want exactly one seeded snapshot row", len(records))

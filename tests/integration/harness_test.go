@@ -141,25 +141,13 @@ func Start(svc string) error {
 	return runCompose(ctx, "up", "-d", "--wait", "--wait-timeout", "120", svc)
 }
 
-// Kill force-stops a service's container (SIGKILL), simulating a crash
-// rather than a graceful stop.
-func Kill(svc string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return runCompose(ctx, "kill", svc)
-}
-
-// Down tears the whole compose project down. wipeVolumes also removes the
-// named volumes (postgres-data, control-data, kafka-data), so the next Up
-// starts from a clean slate.
-func Down(wipeVolumes bool) error {
+// Down tears the whole compose project down and removes the named volumes
+// (postgres-data, control-data, kafka-data), so the next Up starts from a clean
+// slate.
+func Down() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	args := []string{"down"}
-	if wipeVolumes {
-		args = append(args, "-v")
-	}
-	return runCompose(ctx, args...)
+	return runCompose(ctx, "down", "-v")
 }
 
 func TestMain(m *testing.M) {
@@ -172,7 +160,7 @@ func TestMain(m *testing.M) {
 
 	if os.Getenv("POSTIE_KEEP") == "1" {
 		fmt.Fprintln(os.Stderr, "integration harness: POSTIE_KEEP=1, leaving", composeProject, "running")
-	} else if err := Down(true); err != nil {
+	} else if err := Down(); err != nil {
 		fmt.Fprintln(os.Stderr, "integration harness: Down failed:", err)
 		if code == 0 {
 			code = 1
@@ -445,7 +433,6 @@ func CleanupStream(t *testing.T, n streams.Names) {
 type ReceivedRequest struct {
 	Body   []byte
 	Header http.Header
-	At     time.Time
 }
 
 // Receiver is a recording httptest.Server: every request is appended to
@@ -467,7 +454,7 @@ func NewReceiver(t *testing.T) *Receiver {
 	}
 	rec.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		rr := ReceivedRequest{Body: body, Header: r.Header.Clone(), At: time.Now()}
+		rr := ReceivedRequest{Body: body, Header: r.Header.Clone()}
 
 		rec.mu.Lock()
 		rec.received = append(rec.received, rr)

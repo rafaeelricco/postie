@@ -34,7 +34,7 @@ func runtimeFixture(t *testing.T) (config.Engine, config.Application, *Receiver,
 	table := UniqueNamespace(t)
 	CreateEventTable(t, table)
 	InsertEvents(t, table, 2, "one-note")
-	source, _, identity, names := provision(t, table)
+	source, identity, names := provision(t, table)
 	receiver := NewReceiver(t)
 	var engine config.Engine
 	engine.Namespace = namespace
@@ -417,16 +417,6 @@ func hasCommittedEvent(runtime *engineapp.App, eventID string) bool {
 	return false
 }
 
-func hasLog(runtime *engineapp.App, message string) bool {
-	page, _ := runtime.Logs("")
-	for _, entry := range page.Entries {
-		if entry.Message == message {
-			return true
-		}
-	}
-	return false
-}
-
 func countEventRequests(requests []ReceivedRequest, eventID string) int {
 	count := 0
 	for _, request := range requests {
@@ -593,7 +583,7 @@ func TestRuntimeAuditedSkipSurvivesBackwardOffsetReset(t *testing.T) {
 	})
 	names := provisioning.NamesFor(namespace, environment, engineapp.Source(HostSource(table)), 1)
 	runtime, stop := startRuntime(t, engine, app)
-	waitRuntime(t, func() bool { return historyCommittedCount(runtime) == 2 })
+	waitRuntime(t, func() bool { return committedCount(runtime) == 2 })
 	before := len(receiver.Received())
 	stop()
 
@@ -608,7 +598,7 @@ func TestRuntimeAuditedSkipSurvivesBackwardOffsetReset(t *testing.T) {
 	}
 
 	runtime, _ = startRuntime(t, engine, app)
-	waitRuntime(t, func() bool { return historyCommittedCount(runtime) == 2 })
+	waitRuntime(t, func() bool { return committedCount(runtime) == 2 })
 	if got := len(receiver.Received()); got != before {
 		t.Fatalf("audited skip was redelivered after offset reset: before=%d after=%d", before, got)
 	}
@@ -631,17 +621,6 @@ func historySourceBlocked(runtime *engineapp.App, sourceID string) bool {
 		}
 	}
 	return false
-}
-
-func historyCommittedCount(runtime *engineapp.App) int {
-	page, _ := runtime.Logs("")
-	count := 0
-	for _, entry := range page.Entries {
-		if entry.Message == "committed" {
-			count++
-		}
-	}
-	return count
 }
 
 func assertStoredBlock(t *testing.T, sourceID, want string) {

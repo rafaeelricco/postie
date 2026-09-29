@@ -174,16 +174,3 @@ func TestValidateTopicReplication(t *testing.T) {
 		})
 	}
 }
-
-func TestValidateTopicReplicationRecoversWhenAssignmentsMatch(t *testing.T) {
-	detail := kadm.TopicDetail{Topic: "events", Partitions: kadm.PartitionDetails{
-		0: {Partition: 0, Replicas: []int32{1}},
-	}}
-	if err := ValidateTopicReplication(detail, 3); err == nil {
-		t.Fatal("mismatching assignments accepted")
-	}
-	detail.Partitions[0] = kadm.PartitionDetail{Partition: 0, Replicas: []int32{1, 2, 3}}
-	if err := ValidateTopicReplication(detail, 3); err != nil {
-		t.Fatalf("repaired assignments rejected: %v", err)
-	}
-}

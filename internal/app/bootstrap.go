@@ -69,11 +69,7 @@ func Bootstrap(ctx context.Context, engine config.Engine, application config.App
 	for _, input := range application.Sources {
 		source, connection := Source(input), connectionOf(input)
 		resources.sources[source.ID] = source
-		client, err := sourcepg.Open(source, connection)
-		if err != nil {
-			resources.Close()
-			return nil, &InitializationError{Dependency: DependencyControl, Err: err}
-		}
+		client := sourcepg.Open(source, connection)
 		resources.pools = append(resources.pools, client)
 		inspectors[source.ID] = client
 		connections[source.ID] = debezium.Connection(connection) // one set of fields, so the two cannot drift

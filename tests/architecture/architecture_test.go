@@ -12,18 +12,21 @@ import (
 	"testing"
 )
 
+// allowed maps each core package to the core packages it may import. Its keys
+// are the core: adapters may import only these.
+var allowed = map[string]map[string]bool{
+	"stream":    {},
+	"protocol":  {"stream": true},
+	"activity":  {},
+	"provision": {"stream": true},
+	"delivery":  {"stream": true, "protocol": true, "activity": true},
+	"control":   {"stream": true, "activity": true},
+}
+
 // These boundaries keep production rules independent of configuration and clients.
 func TestDependencyBoundaries(t *testing.T) {
 	const module = "github.com/rafaeelricco/postie/"
 	root := filepath.Join("..", "..")
-	allowed := map[string]map[string]bool{
-		"stream":    {},
-		"protocol":  {"stream": true},
-		"activity":  {},
-		"provision": {"stream": true},
-		"delivery":  {"stream": true, "protocol": true, "activity": true},
-		"control":   {"stream": true, "activity": true},
-	}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -103,7 +106,7 @@ func edgeViolation(rel, dependency string) string {
 	case strings.HasPrefix(rel, "internal/config/"):
 		return "config must not import engine packages"
 	case strings.HasPrefix(rel, "internal/adapters/"):
-		if dependency == "config" || dependency == "app" || strings.HasPrefix(dependency, "adapters/") {
+		if _, core := allowed[dependency]; !core {
 			return "adapters may import only the core"
 		}
 	case strings.HasPrefix(dependency, "adapters/") && !strings.HasPrefix(rel, "internal/app/"):
@@ -123,8 +126,12 @@ func TestEdgeViolation(t *testing.T) {
 		{"cmd/postie/main.go", "adapters/kafka", true},
 		{"internal/config/load.go", "stream", true},
 		{"internal/adapters/kafka/consumer.go", "provision", false},
+		{"internal/adapters/httpdelivery/client.go", "delivery", false},
 		{"internal/adapters/kafka/consumer.go", "adapters/debezium", true},
 		{"internal/adapters/kafka/consumer.go", "config", true},
+		{"internal/adapters/kafka/consumer.go", "config/helpers", true},
+		{"internal/adapters/kafka/consumer.go", "app", true},
+		{"internal/adapters/kafka/consumer.go", "foo", true},
 	} {
 		if got := edgeViolation(tc.rel, tc.dependency) != ""; got != tc.violates {
 			t.Errorf("edgeViolation(%q, %q) violates=%v, want %v", tc.rel, tc.dependency, got, tc.violates)

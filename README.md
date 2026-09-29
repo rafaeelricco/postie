@@ -21,20 +21,19 @@ Replay jobs and administrative repair of blocked streams are not implemented.
 You need Go 1.26 or later and Docker with Compose. Run every command from the
 repository root. The Compose stack uses roughly 700 MB of memory.
 
-Copy the sample environment file and load it into your shell:
+Export the variables the example configuration reads:
 
 ```bash
-cp .env.example .env
-set -a
-. ./.env
-set +a
+export POSTIE_OPERATOR_TOKEN=change-me POSTIE_CAPTURE_PASSWORD=capture \
+  POSTIE_DELIVERY_PASSWORD=delivery \
+  POSTIE_DATABASE_URL='postgres://control:control@localhost:15433/control?sslmode=disable'
 ```
 
 Validate the example configuration. This does not connect to PostgreSQL,
 Kafka, or an HTTP destination:
 
 ```bash
-go run ./cmd/postiectl config validate --config examples/postie.yaml
+go run ./cmd/postie config validate --config examples/postie.yaml
 ```
 
 The sample reports one PostgreSQL source and one HTTP destination. Engine
@@ -71,8 +70,7 @@ resources there first.
 Provision the first stream generation from inside the Compose network:
 
 ```bash
-docker compose run --rm --entrypoint postiectl postie \
-  provision --config /app/examples/postie.yaml --generation 1
+docker compose run --rm postie provision --config /app/examples/postie.yaml --generation 1
 ```
 
 Provisioning validates each source table, creates or verifies its Kafka topic,
@@ -102,6 +100,12 @@ curl -fsS \
 The operator API also lists subscriptions, pauses or resumes a destination, and
 reads recent activity. The routes are in
 [Delivery and operations](docs/specification.md#delivery-and-operations).
+
+Stop the development stack when finished:
+
+```bash
+docker compose --profile postie down
+```
 
 ## Use the published image
 
@@ -141,8 +145,7 @@ services:
 Set `application_config: ./config/application.yaml` in the mounted
 `postie.yaml`. Postie still needs Kafka, Kafka Connect with Debezium, and a
 control PostgreSQL database; [docker-compose.yml](docker-compose.yml) shows a
-working set. Run `postiectl` from the same image with
-`--entrypoint postiectl`.
+working set. Run `postie provision` and `postie config validate` from the same image.
 
 ## Delivery contract
 
@@ -163,17 +166,14 @@ before the Kafka commit can produce a duplicate. Your receiver should apply an
 event and save its idempotency key in the same transaction. Each partition
 delivers in order, and a retrying partition does not block other partitions.
 
-See [the protocol contract](docs/protocol.md) for wire fields, acknowledgements,
-filters, and supported PostgreSQL values.
+See [HTTP delivery](docs/specification.md#http-delivery) for wire fields,
+acknowledgements, filters, and supported PostgreSQL values.
 
 ## Documentation
 
 | Document                               | Purpose                                                                       |
 | -------------------------------------- | ----------------------------------------------------------------------------- |
-| [Architecture](docs/architecture.md)   | Package boundaries and runtime ownership.                                     |
-| [Protocol](docs/protocol.md)           | JSON, authentication, acknowledgements, filters, and source value conversion. |
-| [Specification](docs/specification.md) | Supported capture and delivery behavior.                                      |
-| [Quality procedures](docs/qa.md)       | Checks and local release steps.                                               |
+| [Specification](docs/specification.md) | Capture, configuration, the HTTP wire contract, operations, and architecture. |
 
 ## Development
 
@@ -183,22 +183,70 @@ Run the offline checks:
 make lint test
 ```
 
-Use the focused suites when you change a specific contract:
+Use the focused checks when you change a specific area:
 
-| Change area                        | Checks               |
-| ---------------------------------- | -------------------- |
-| Protocol formatting or filtering   | `make contract fuzz` |
-| User-visible behavior              | `make bdd`           |
-| A fixed regression                 | `make regression`    |
-| Package boundaries                 | `make architecture`  |
-| Capture, workers, or control state | `make integration`   |
+| Check               | Command             | Covers                                                      |
+| ------------------- | ------------------- | ----------------------------------------------------------- |
+| Lint and unit tests | `make lint test`    | Formatting, `go vet`, race-enabled tests.                   |
+| Unit tests only     | `make unit`         | The tests beside each package in `internal/` and `cmd/`.    |
+| Package boundaries  | `make architecture` | Allowed dependency direction and direct modules.            |
+| Coverage            | `make cover`        | Coverage for gated packages; default floor is 90%.          |
+| Mutation checks     | `make mutation`     | Mutation efficacy for gated packages; default floor is 90%. |
+| Full quality set    | `make quality`      | Lint, coverage, and mutation checks.                        |
+| Integration         | `make integration`  | PostgreSQL, Kafka, Kafka Connect, and HTTP delivery.        |
+| Fuzzing             | `make fuzz`         | Acknowledgements, filters, and Debezium decoding.           |
 
-The integration suite uses its own `postie-integration` Compose project and
-ports 25432, 25433, 39092, and 28083. It can run beside the development stack,
-but run only one integration suite at a time. Set `POSTIE_KEEP=1` to keep the
-integration containers and volumes for inspection.
+The gated packages are `internal/{config,stream,protocol,provision,delivery,control,activity}`
+and `internal/adapters/{operator,httpdelivery,debezium}`. Kafka, control
+database, and source database adapters rely on the integration stack for their
+external behavior. `internal/app` composes adapters without owning business
+rules.
 
 The main code areas are `internal/config`, `internal/protocol`,
 `internal/delivery`, `internal/adapters/debezium`, `internal/provision`,
-`internal/control`, and `internal/adapters/operator`. The two binaries are
-`postie` and `postiectl`, built from `cmd/postie` and `cmd/postiectl`.
+`internal/control`, and `internal/adapters/operator`. There is one binary,
+`postie`, built from `cmd/postie`. Run without a subcommand it serves delivery
+and the operator API. `postie config validate` and `postie provision` are its
+subcommands.
+
+### Where tests belong
+
+- Each package's tests live beside the code in `<pkg>_test.go`, including
+  `cmd/postie`. They run with `make test`, or alone with `make unit`. Fuzz
+  tests cover untrusted protocol values and Debezium decoding and run with
+  `make fuzz`.
+- Architecture tests are in `tests/architecture`. They reject forbidden
+  package dependencies and any direct module outside the allowlist.
+- Integration tests are in `tests/integration`. They use the Compose stack for
+  behavior that needs real PostgreSQL, Kafka, or Kafka Connect services.
+
+### Rules
+
+- Tests use only the standard library. A new direct module fails
+  `make architecture` until it is added to `allowedModules` in
+  `tests/architecture/architecture_test.go`, in the same change, with the
+  reason in the commit message.
+- When a new package can be tested offline, add it to `GATED` in the Makefile
+  in the same change, so coverage and mutation checks stay current.
+- For a new bug, add a failing test in that package's test file before
+  changing the implementation.
+
+### Integration project
+
+The integration suite runs [docker-compose.yml](docker-compose.yml) as its own
+`postie-integration` Compose project. `POSTIE_SOURCE_PORT`,
+`POSTIE_CONTROL_PORT`, `POSTIE_KAFKA_PORT`, and `POSTIE_CONNECT_PORT` move its
+ports to 25432, 25433, 39092, and 28083. It can run beside the development
+stack, but run only one integration suite at a time. Set `POSTIE_KEEP=1` to
+keep the integration containers and volumes for inspection.
+
+### CI and releases
+
+One workflow, `.github/workflows/ci.yml`, verifies pull requests and publishes
+releases. Every pull request runs
+`make lint cover`, `make integration`, and a multi-architecture image build.
+Merging a pull request into `main` runs the lint, coverage, and integration
+checks on the merge commit, then tags the next version, creates the GitHub
+Release, and pushes `ghcr.io/rafaeelricco/postie`. The version bump is a patch
+unless the pull request carries the `release:minor` or `release:major` label.
+Direct pushes to `main` do not release.

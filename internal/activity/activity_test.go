@@ -83,3 +83,35 @@ func TestLogConcurrentReadersOwnTheirSnapshots(t *testing.T) {
 		t.Fatal("snapshot mutated log")
 	}
 }
+
+// A cursor exactly capacity behind still points at the oldest retained entry,
+// so nothing was missed and the read is not a reset. One entry later that
+// same cursor has fallen out of the window and is.
+func TestLogCursorExactlyAtWindowEdgeIsNotAReset(t *testing.T) {
+	log := New(nil)
+	start, err := log.Read("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < capacity; i++ {
+		log.Add(Entry{Message: "delivered"})
+	}
+	page, err := log.Read(start.NextCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Reset {
+		t.Fatalf("cursor exactly %d behind reported a reset while the oldest entry is retained", capacity)
+	}
+	if len(page.Entries) != capacity {
+		t.Fatalf("entries=%d, want %d", len(page.Entries), capacity)
+	}
+	log.Add(Entry{Message: "delivered"})
+	past, err := log.Read(start.NextCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !past.Reset {
+		t.Fatalf("cursor %d behind did not report a reset after its entry was evicted", capacity+1)
+	}
+}

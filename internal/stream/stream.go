@@ -5,9 +5,8 @@ import (
 	"strconv"
 )
 
-// Identity is frozen per stream generation (spec §Source and topic
-// contract). It is stored as JSONB in the control store, so its fields are
-// JSON-tagged.
+// Identity is frozen per stream generation (spec §Capture contract). It is
+// stored as JSONB in the control store, so its fields are JSON-tagged.
 type Identity struct {
 	Table              string   `json:"table"`
 	SerialColumn       string   `json:"serialColumn"`
@@ -53,15 +52,14 @@ func (g Generation) String() string { return strconv.Itoa(int(g)) }
 
 // Record is the decoded event delivered to destinations.
 type Record struct {
-	Source      Source
-	Payload     json.RawMessage
-	Topic       string
-	Partition   int32
-	Offset      int64
-	LeaderEpoch int32
-	EventID     string
-	Generation  Generation
-	Replay      bool
+	Source     Source
+	Payload    json.RawMessage
+	Topic      string
+	Partition  int32
+	Offset     int64
+	EventID    string
+	Generation Generation
+	Replay     bool
 }
 
 // RawRecord is the broker-level event before payload decoding.

@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rafaeelricco/postie/internal/provision"
 	"github.com/rafaeelricco/postie/internal/stream"
@@ -16,16 +17,10 @@ import (
 // InspectTable connects to the source and reports whether c.Source.Table
 // exists in the public schema, its columns and their nullability, and
 // whether c.Source.SerialColumn has a single-column unique or primary key
-// index. It is read-only and opens and closes its own connection each call.
-func (c Client) InspectTable(ctx context.Context) (provision.TableFacts, error) {
-	conn, err := pgx.Connect(ctx, connString(c.Connection))
-	if err != nil {
-		return provision.TableFacts{}, fmt.Errorf("capture: connect to %s: %w", c.Source.ID, err)
-	}
-	defer conn.Close(ctx)
-
+// index. It is read-only and borrows a pooled connection per query.
+func (c *Client) InspectTable(ctx context.Context) (provision.TableFacts, error) {
 	var tableExists bool
-	err = conn.QueryRow(ctx, `
+	err := c.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_class c
 			JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -37,7 +32,7 @@ func (c Client) InspectTable(ctx context.Context) (provision.TableFacts, error) 
 	if !tableExists {
 		return provision.TableFacts{Exists: false}, nil
 	}
-	rows, err := conn.Query(ctx, `
+	rows, err := c.pool.Query(ctx, `
 		SELECT a.attname, t.typname, a.attnotnull
 		FROM pg_attribute a
 		JOIN pg_type t ON t.oid = a.atttypid
@@ -63,7 +58,7 @@ func (c Client) InspectTable(ctx context.Context) (provision.TableFacts, error) 
 		return provision.TableFacts{}, fmt.Errorf("capture: read columns of public.%s: %w", c.Source.Table, err)
 	}
 	var serialUniqueIndex bool
-	err = conn.QueryRow(ctx, `
+	err = c.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM pg_index i
@@ -89,11 +84,33 @@ type Connection struct {
 	Database string
 }
 
-// Client inspects one configured PostgreSQL source.
+// Client inspects one configured PostgreSQL source over a pool it owns.
 type Client struct {
-	Source     stream.Source
-	Connection Connection
+	Source stream.Source
+	pool   *pgxpool.Pool
 }
+
+// Open builds a client with its own small pool. The reconcile loop inspects
+// every source every few seconds and provisioning polls a slot five times a
+// second, so a pool turns each of those from a TCP handshake and a session
+// startup into an acquire. The caller must Close it.
+func Open(source stream.Source, connection Connection) (*Client, error) {
+	config, err := pgxpool.ParseConfig(connString(connection))
+	if err != nil {
+		return nil, fmt.Errorf("capture: configure pool for %s: %w", source.ID, err)
+	}
+	// One reconcile inspection and one provisioning poll at a time is the
+	// whole access pattern; MinConns stays 0 so Open performs no I/O.
+	config.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		return nil, fmt.Errorf("capture: open pool for %s: %w", source.ID, err)
+	}
+	return &Client{Source: source, pool: pool}, nil
+}
+
+// Close releases the pool's connections.
+func (c *Client) Close() { c.pool.Close() }
 
 func connString(c Connection) string {
 	u := url.URL{Scheme: "postgres", User: url.UserPassword(c.Username, c.Password), Host: c.Host + ":" + strconv.Itoa(c.Port), Path: "/" + c.Database}
@@ -101,15 +118,10 @@ func connString(c Connection) string {
 }
 
 // SlotHealth reports whether the named replication slot exists and, if so, its
-// WAL status. It is read-only and opens and closes its own connection each call.
-func (c Client) SlotHealth(ctx context.Context, slot string) (provision.SlotStatus, error) {
-	conn, err := pgx.Connect(ctx, connString(c.Connection))
-	if err != nil {
-		return provision.SlotStatus{}, fmt.Errorf("capture: connect to %s: %w", c.Source.ID, err)
-	}
-	defer conn.Close(ctx)
+// WAL status. It is read-only and borrows a pooled connection per query.
+func (c *Client) SlotHealth(ctx context.Context, slot string) (provision.SlotStatus, error) {
 	var walStatus *string
-	err = conn.QueryRow(ctx, `
+	err := c.pool.QueryRow(ctx, `
 		SELECT wal_status
 		FROM pg_replication_slots
 		WHERE slot_name = $1

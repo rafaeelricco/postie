@@ -541,7 +541,11 @@ func assertCaptureWorks(t *testing.T, table string, names streams.Names) {
 
 func inspectTable(ctx context.Context, input config.Source, partitions int32) (streams.Identity, error) {
 	source := engineapp.Source(input)
-	client := &sourcepg.Client{Source: source, Connection: sourcepg.Connection{Host: input.Host, Port: input.Port, Username: input.Username, Password: input.Password, Database: input.Database}}
+	client, err := sourcepg.Open(source, sourcepg.Connection{Host: input.Host, Port: input.Port, Username: input.Username, Password: input.Password, Database: input.Database})
+	if err != nil {
+		return streams.Identity{}, err
+	}
+	defer client.Close()
 	facts, err := client.InspectTable(ctx)
 	if err != nil {
 		return streams.Identity{}, err

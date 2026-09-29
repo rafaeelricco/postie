@@ -11,7 +11,7 @@ import (
 )
 
 // repoRoot returns the repository root, two levels above this test file
-// (cmd/postiectl).
+// (cmd/postie).
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()

@@ -161,11 +161,11 @@ func TestRegression_RegisteredTopicReplication(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "run", "./cmd/postiectl", "provision", "--config", enginePath, "--generation", "1")
+	cmd := exec.CommandContext(ctx, "go", "run", "./cmd/postie", "provision", "--config", enginePath, "--generation", "1")
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("postiectl provision unexpectedly succeeded: %s", out)
+		t.Fatalf("postie provision unexpectedly succeeded: %s", out)
 	}
 	assertReplicationDiagnostic(t, string(out))
 	after := waitTopicVisible(t, adm, names.Topic, 30*time.Second)

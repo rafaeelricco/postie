@@ -88,6 +88,7 @@ services:
       POSTIE_DELIVERY_PASSWORD: ${POSTIE_DELIVERY_PASSWORD:-delivery}
       POSTIE_DATABASE_URL: postgres://control:control@control-postgres:5432/control?sslmode=disable
     command: ["--config", "/app/examples/postie.yaml"]
+    volumes: ["./examples:/app/examples:ro"]
     ports: ["8081:8081"]
 volumes:
   postgres-data:

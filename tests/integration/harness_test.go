@@ -38,12 +38,12 @@ import (
 	streams "github.com/rafaeelricco/postie/internal/stream"
 )
 
-// Infrastructure endpoints, as published by tests/integration/compose.yaml. The test
+// Infrastructure endpoints, as published by docker-compose.yml under composeEnv. The test
 // process (and the admin/pgx clients it builds) reach every service through
 // its host-published port; only the connector config handed to Connect
 // itself uses in-network hostnames (see ContainerSource).
 const (
-	composeFile    = "compose.yaml"
+	composeFile    = "../../docker-compose.yml"
 	composeProject = "postie-integration"
 
 	hostPostgresHost      = "localhost"
@@ -62,6 +62,10 @@ const (
 	kafkaHostAddr = "localhost:39092"
 	connectURL    = "http://localhost:28083"
 )
+
+// composeEnv moves the published ports off the development stack's defaults,
+// so the two projects can run side by side.
+var composeEnv = []string{"POSTIE_SOURCE_PORT=25432", "POSTIE_CONTROL_PORT=25433", "POSTIE_KAFKA_PORT=39092", "POSTIE_CONNECT_PORT=28083"}
 
 // eventTableColumns defines the synthetic source table column order, which
 // is also the DDL CreateEventTable applies.
@@ -100,6 +104,7 @@ func composeArgs(args ...string) []string {
 
 func runCompose(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, "docker", composeArgs(args...)...)
+	cmd.Env = append(os.Environ(), composeEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker %s: %w\n%s", strings.Join(args, " "), err, out)

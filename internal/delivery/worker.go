@@ -44,6 +44,9 @@ func (w *Worker) Process(ctx context.Context, raw *stream.RawRecord, commit Comm
 	entry := entryFor(record, w.Destination)
 	return completeRecord(ctx, storeRetryDelay, recordActions{
 		skipped: func(ctx context.Context) (bool, error) {
+			if !raw.Historical {
+				return false, nil
+			}
 			return w.Store.HasSkip(ctx, w.Scope, w.Destination, record)
 		},
 		send: func(ctx context.Context) (Outcome, error) { return w.send(ctx, record, entry) },

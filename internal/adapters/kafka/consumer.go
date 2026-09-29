@@ -43,12 +43,16 @@ type Consumer struct {
 }
 
 type partitionWorker struct {
-	consumer    *Consumer
-	key         partitionKey
-	ctx         context.Context
-	cancel      context.CancelFunc
-	done        chan struct{}
-	batches     chan []*kgo.Record
+	consumer *Consumer
+	key      partitionKey
+	ctx      context.Context
+	cancel   context.CancelFunc
+	done     chan struct{}
+	batches  chan []*kgo.Record
+	// horizon is the partition's end offset when this worker initialized.
+	// Only the worker goroutine touches it: initialize writes it before the
+	// batch loop starts, and process reads it there.
+	horizon     int64
 	mu          sync.Mutex
 	owned       bool
 	initialized bool
@@ -241,7 +245,7 @@ func (w *partitionWorker) run() {
 }
 
 func (w *partitionWorker) process(raw *kgo.Record) error {
-	record := &stream.RawRecord{Topic: raw.Topic, Partition: raw.Partition, Offset: raw.Offset, LeaderEpoch: raw.LeaderEpoch, Key: raw.Key, Value: raw.Value}
+	record := &stream.RawRecord{Topic: raw.Topic, Partition: raw.Partition, Offset: raw.Offset, LeaderEpoch: raw.LeaderEpoch, Key: raw.Key, Value: raw.Value, Historical: raw.Offset < w.horizon}
 	return w.consumer.process(w.ctx, record, func(ctx context.Context, position *stream.RawRecord) error {
 		return w.commit(ctx, &kgo.Record{Topic: position.Topic, Partition: position.Partition, Offset: position.Offset, LeaderEpoch: position.LeaderEpoch})
 	})
@@ -273,6 +277,7 @@ func (w *partitionWorker) initialize() error {
 		if !exists || last.Err != nil {
 			return fmt.Errorf("partition end unavailable")
 		}
+		w.horizon = last.Offset
 		offset, exists := committed.Lookup(w.key.topic, w.key.partition)
 		if exists && offset.Err != nil {
 			return offset.Err

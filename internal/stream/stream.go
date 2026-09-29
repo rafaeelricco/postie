@@ -70,6 +70,10 @@ type RawRecord struct {
 	LeaderEpoch int32
 	Key         []byte
 	Value       []byte
+	// Historical marks a record that was already in the log when this worker
+	// took the partition. Only such a record can carry a durable skip, so a
+	// live one needs no skip lookup.
+	Historical bool
 }
 
 // Source is the capture-facing source description shared by engine packages.

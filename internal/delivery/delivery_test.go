@@ -252,7 +252,7 @@ func TestWorkerPreviouslyAuditedSkipOnlyCommits(t *testing.T) {
 	store := &skipStore{has: true}
 	worker := Worker{Store: store, Scope: stream.Scope{Generation: 1}, Destination: "d", Decode: func(*stream.RawRecord) (stream.Record, error) { return stream.Record{}, nil }, Processor: &Processor{}}
 	commits := 0
-	err := worker.Process(context.Background(), &stream.RawRecord{}, func(context.Context, *stream.RawRecord) error { commits++; return nil })
+	err := worker.Process(context.Background(), &stream.RawRecord{Historical: true}, func(context.Context, *stream.RawRecord) error { commits++; return nil })
 	if err != nil || commits != 1 || store.saves != 0 {
 		t.Fatalf("err=%v commits=%d saves=%d", err, commits, store.saves)
 	}
@@ -334,7 +334,7 @@ func TestWorkerProcessExistingDurableSkipOnlyCommits(t *testing.T) {
 	gate := &apiGate{allowed: true}
 	w := newAPIWorker(apiRecord(), store, gate, sender, activity.New(io.Discard))
 	commits := 0
-	err := w.Process(context.Background(), &stream.RawRecord{}, func(context.Context, *stream.RawRecord) error { commits++; return nil })
+	err := w.Process(context.Background(), &stream.RawRecord{Historical: true}, func(context.Context, *stream.RawRecord) error { commits++; return nil })
 	if err != nil || commits != 1 || sender.calls != 0 || store.saveCalls != 0 {
 		t.Fatalf("err=%v commits=%d sends=%d saves=%d", err, commits, sender.calls, store.saveCalls)
 	}
@@ -433,5 +433,52 @@ func TestWorkerProcessDisallowedGateStopsBeforeDecode(t *testing.T) {
 	err := w.Process(context.Background(), &stream.RawRecord{}, nil)
 	if !errors.Is(err, context.Canceled) || decoded {
 		t.Fatalf("err=%v decoded=%v", err, decoded)
+	}
+}
+
+// A live record is being read for the first time, so it cannot already carry a
+// durable skip: the store is never asked, and a stored skip left over from some
+// other record must not suppress the send.
+func TestWorkerProcessLiveRecordSkipsTheSkipLookup(t *testing.T) {
+	store := &apiSkipStore{has: true}
+	sender := &fakeSender{outcome: Delivered}
+	gate := &apiGate{allowed: true}
+	w := newAPIWorker(apiRecord(), store, gate, sender, activity.New(io.Discard))
+	commits := 0
+	err := w.Process(context.Background(), &stream.RawRecord{}, func(context.Context, *stream.RawRecord) error { commits++; return nil })
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if store.hasCalls != 0 {
+		t.Fatalf("live record consulted the skip store: hasCalls=%d", store.hasCalls)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("stored skip suppressed a live record: sends=%d", sender.calls)
+	}
+	if commits != 1 {
+		t.Fatalf("commits=%d", commits)
+	}
+}
+
+// A re-read record may have been skipped before the crash that lost its offset
+// commit, so it must still be checked against the durable skip.
+func TestWorkerProcessHistoricalRecordConsultsTheSkipStore(t *testing.T) {
+	store := &apiSkipStore{has: true}
+	sender := &fakeSender{outcome: Delivered}
+	gate := &apiGate{allowed: true}
+	w := newAPIWorker(apiRecord(), store, gate, sender, activity.New(io.Discard))
+	commits := 0
+	err := w.Process(context.Background(), &stream.RawRecord{Historical: true}, func(context.Context, *stream.RawRecord) error { commits++; return nil })
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if store.hasCalls != 1 {
+		t.Fatalf("historical record skipped the skip lookup: hasCalls=%d", store.hasCalls)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("stored skip was redelivered: sends=%d", sender.calls)
+	}
+	if commits != 1 {
+		t.Fatalf("commits=%d", commits)
 	}
 }

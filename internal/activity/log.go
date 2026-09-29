@@ -47,7 +47,7 @@ type Page struct {
 const capacity = 1000
 
 // Log is a ring buffer of the most recent entries. Each entry gets a
-// sequence number, and entry n lives in slot (n-1) % capacity.
+// sequence number, and entry n lives in slot n % capacity.
 type Log struct {
 	mu       sync.Mutex
 	boot     string
@@ -125,8 +125,11 @@ func parseCursor(cursor string) (boot string, sequence uint64, err error) {
 	return boot, sequence, nil
 }
 
-// slot maps a 1-based sequence number to its ring buffer index.
-func slot(sequence uint64) uint64 { return (sequence - 1) % capacity }
+// slot maps a sequence number to its ring buffer index. Any consistent
+// mapping works because Add and Read both index through this function; the
+// only requirement is that n and n+capacity collide, so the newest entry
+// evicts the oldest.
+func slot(sequence uint64) uint64 { return sequence % capacity }
 
 // firstUnread is the first sequence number to return: the one after the
 // cursor, or the oldest entry still retained when the cursor is older.
@@ -135,9 +138,6 @@ func slot(sequence uint64) uint64 { return (sequence - 1) % capacity }
 //	firstUnread(5, 3)    // 4
 //	firstUnread(2500, 0) // 1501
 func firstUnread(sequence, after uint64) uint64 {
-	oldest := uint64(1)
-	if sequence > capacity {
-		oldest = sequence - capacity + 1
-	}
+	oldest := max(sequence, capacity) - capacity + 1
 	return max(oldest, after+1)
 }

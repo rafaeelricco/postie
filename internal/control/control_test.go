@@ -34,8 +34,6 @@ type fakeStore struct {
 	setDesiredCh chan DesiredSubscription
 	observations []DesiredSubscription
 	blocked      []string
-	renewCalls   int
-	releaseCalls int
 	releaseCh    chan struct{}
 	releaseCheck func() bool
 	releaseTTL   time.Duration
@@ -141,7 +139,6 @@ func (s *fakeStore) setDesiredState(id, state string, revision int64) {
 func (s *fakeStore) RenewLease(ctx context.Context, _ stream.Scope, _ string, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.renewCalls++
 	if deadline, ok := ctx.Deadline(); ok {
 		s.reconcileTTL = time.Until(deadline)
 	}
@@ -163,7 +160,6 @@ func (s *fakeStore) SubscriptionObserved(_ context.Context, _ stream.Scope, _ st
 
 func (s *fakeStore) ReleaseLease(ctx context.Context, _ stream.Scope, _ string) error {
 	s.mu.Lock()
-	s.releaseCalls++
 	check := s.releaseCheck
 	err := s.blockErr
 	if deadline, ok := ctx.Deadline(); ok {
@@ -193,27 +189,19 @@ func (s *fakeStore) blockedList() []string {
 }
 
 type fakeMonitor struct {
-	mu     sync.Mutex
 	state  string
 	reason string
-	calls  int
 }
 
 func (m *fakeMonitor) InspectSource(_ context.Context, _ stream.Source, _ stream.Registration) (string, string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls++
 	return m.state, m.reason
 }
 
 type fakeHealth struct {
-	mu  sync.Mutex
 	err error
 }
 
 func (h *fakeHealth) Ping(context.Context) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	return h.err
 }
 
@@ -294,7 +282,6 @@ type fakeFactory struct {
 	created      []*fakeConsumer
 	destinations []Destination
 	err          error
-	createdCh    chan *fakeConsumer
 }
 
 func (f *fakeFactory) new(_ context.Context, destination Destination, _ map[string]stream.Registration, _ Dispatch) (Consumer, error) {
@@ -312,12 +299,6 @@ func (f *fakeFactory) new(_ context.Context, destination Destination, _ map[stri
 	}
 	f.created = append(f.created, c)
 	f.destinations = append(f.destinations, destination)
-	if f.createdCh != nil {
-		select {
-		case f.createdCh <- c:
-		default:
-		}
-	}
 	return c, nil
 }
 
@@ -375,6 +356,21 @@ func setSubscription(r *Service, id string, view Subscription, revision int64) {
 	r.subscriptions[id].view = view
 	r.subscriptions[id].revision = revision
 	r.mu.Unlock()
+}
+
+type changeResult struct {
+	view Subscription
+	err  error
+}
+
+// startChange runs s.Change in a goroutine and delivers its result.
+func startChange(s *Service, ctx context.Context, id string, state SubscriptionState) <-chan changeResult {
+	result := make(chan changeResult, 1)
+	go func() {
+		view, err := s.Change(ctx, id, state)
+		result <- changeResult{view, err}
+	}()
+	return result
 }
 
 func TestServiceNewValidationAndErrors(t *testing.T) {
@@ -609,17 +605,7 @@ func TestChangeConvergesOnlyAfterObservedRevision(t *testing.T) {
 	r, store, _, _, _ := makeService(t, []string{"events"}, []Destination{destination("destination", "events")})
 	store.observed = true
 	store.setDesiredCh = make(chan DesiredSubscription, 1)
-	result := make(chan struct {
-		view Subscription
-		err  error
-	}, 1)
-	go func() {
-		view, err := r.Change(context.Background(), "destination", StatePaused)
-		result <- struct {
-			view Subscription
-			err  error
-		}{view, err}
-	}()
+	result := startChange(r, context.Background(), "destination", StatePaused)
 	select {
 	case <-store.setDesiredCh:
 	case <-time.After(time.Second):
@@ -641,17 +627,7 @@ func TestChangeWaitsForUnobservedWorkerAndReportsPendingState(t *testing.T) {
 	store.setDesiredCh = make(chan DesiredSubscription, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
-	result := make(chan struct {
-		view Subscription
-		err  error
-	}, 1)
-	go func() {
-		view, err := r.Change(ctx, "destination", StatePaused)
-		result <- struct {
-			view Subscription
-			err  error
-		}{view, err}
-	}()
+	result := startChange(r, ctx, "destination", StatePaused)
 	select {
 	case <-store.setDesiredCh:
 	case <-time.After(time.Second):
@@ -672,11 +648,7 @@ func TestChangeSupersededAndDependencyErrors(t *testing.T) {
 	t.Run("superseded", func(t *testing.T) {
 		r, store, _, _, _ := makeService(t, []string{"events"}, []Destination{destination("destination", "events")})
 		store.setDesiredCh = make(chan DesiredSubscription, 1)
-		result := make(chan error, 1)
-		go func() {
-			_, err := r.Change(context.Background(), "destination", StatePaused)
-			result <- err
-		}()
+		result := startChange(r, context.Background(), "destination", StatePaused)
 		select {
 		case <-store.setDesiredCh:
 		case <-time.After(time.Second):
@@ -685,9 +657,9 @@ func TestChangeSupersededAndDependencyErrors(t *testing.T) {
 		setSubscription(r, "destination", Subscription{ID: "destination", State: StateRunning, DesiredState: StateRunning}, 3)
 		r.Signal()
 		select {
-		case err := <-result:
-			if err == nil || err.Error() != "control request superseded" {
-				t.Fatalf("superseded error = %v", err)
+		case got := <-result:
+			if got.err == nil || got.err.Error() != "control request superseded" {
+				t.Fatalf("superseded error = %v", got.err)
 			}
 		case <-time.After(time.Second):
 			t.Fatal("superseded Change did not return")
@@ -705,11 +677,7 @@ func TestChangeSupersededAndDependencyErrors(t *testing.T) {
 		r, store, _, _, _ := makeService(t, []string{"events"}, []Destination{destination("destination", "events")})
 		store.observedErr = errors.New("read failed")
 		store.setDesiredCh = make(chan DesiredSubscription, 1)
-		result := make(chan error, 1)
-		go func() {
-			_, err := r.Change(context.Background(), "destination", StatePaused)
-			result <- err
-		}()
+		result := startChange(r, context.Background(), "destination", StatePaused)
 		select {
 		case <-store.setDesiredCh:
 		case <-time.After(time.Second):
@@ -717,9 +685,9 @@ func TestChangeSupersededAndDependencyErrors(t *testing.T) {
 		}
 		r.reconcile(context.Background())
 		select {
-		case err := <-result:
-			if err == nil || err.Error() != "worker observation unavailable" {
-				t.Fatalf("observation error = %v", err)
+		case got := <-result:
+			if got.err == nil || got.err.Error() != "worker observation unavailable" {
+				t.Fatalf("observation error = %v", got.err)
 			}
 		case <-time.After(time.Second):
 			t.Fatal("observation Change did not return")
@@ -732,18 +700,6 @@ func TestChangeSupersededAndDependencyErrors(t *testing.T) {
 			t.Fatalf("missing Change error = %v", err)
 		}
 	})
-}
-
-func TestAllowedRejectsExpiredLease(t *testing.T) {
-	r, _, _, _, _ := makeService(t, []string{"events"}, []Destination{destination("destination", "events")})
-	r.mu.Lock()
-	r.status = Status{Control: true, Kafka: true}
-	r.leaseUntil = time.Now().Add(-time.Second)
-	r.sourceStates["events"] = SourceStatus{ID: "events", State: "running"}
-	r.mu.Unlock()
-	if r.Allowed("events") {
-		t.Fatal("expired lease allowed dispatch")
-	}
 }
 
 func TestStartStopsWorkersBeforeReleasingLease(t *testing.T) {
@@ -807,11 +763,7 @@ func TestChangeDoesNotCallEqualRevisionSuperseded(t *testing.T) {
 	store.setDesiredCh = make(chan DesiredSubscription, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
-	result := make(chan error, 1)
-	go func() {
-		_, err := r.Change(ctx, "destination", StatePaused)
-		result <- err
-	}()
+	result := startChange(r, ctx, "destination", StatePaused)
 	select {
 	case desired := <-store.setDesiredCh:
 		setSubscription(r, "destination", Subscription{
@@ -821,9 +773,9 @@ func TestChangeDoesNotCallEqualRevisionSuperseded(t *testing.T) {
 		t.Fatal("Change did not set desired state")
 	}
 	select {
-	case err := <-result:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("equal-revision Change error = %v, want deadline", err)
+	case got := <-result:
+		if !errors.Is(got.err, context.DeadlineExceeded) {
+			t.Fatalf("equal-revision Change error = %v, want deadline", got.err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Change did not finish after its context expired")

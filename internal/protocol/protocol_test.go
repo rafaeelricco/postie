@@ -9,27 +9,48 @@ import (
 	"github.com/rafaeelricco/postie/internal/stream"
 )
 
-func TestConvertValuePreservesDecimalAndTimeSemantics(t *testing.T) {
+func TestConvertValue(t *testing.T) {
 	cases := []struct {
-		typ       stream.PGType
-		raw, want string
+		name string
+		typ  stream.PGType
+		raw  string
+		want string
 	}{
-		{stream.PGFloat8, `1e300`, "1" + strings.Repeat("0", 300)},
-		{stream.PGFloat4, `1.2e2`, `120`},
-		{stream.PGTimestamp, `1704164645123456`, `"2024-01-02 03:04:05.123456"`},
-		{stream.PGTimestamptz, `"2024-01-02T03:04:05.123456+05:30"`, `"2024-01-01 21:34:05.123456+00"`},
+		// The wire contract requires every one of the 300 zero digits.
+		{"float8 large decimal", stream.PGFloat8, "1e300", "1" + strings.Repeat("0", 300)},
+		{"float4 positive exponent", stream.PGFloat4, "1.2e2", "120"},
+		{"float4 negative fraction", stream.PGFloat4, "-1.25e-2", "-0.0125"},
+		{"int2 max", stream.PGInt2, "32767", "32767"},
+		{"int2 min", stream.PGInt2, "-32768", "-32768"},
+		{"int4 max", stream.PGInt4, "2147483647", "2147483647"},
+		{"int8 max", stream.PGInt8, "9223372036854775807", "9223372036854775807"},
+		{"int8 min", stream.PGInt8, "-9223372036854775808", "-9223372036854775808"},
+		{"float4 ordinary", stream.PGFloat4, "3.14", "3.14"},
+		{"float8 ordinary", stream.PGFloat8, "0.1", "0.1"},
+		{"float8 negative fraction", stream.PGFloat8, "-1.2300e-2", "-0.012300"},
+		{"float8 zero", stream.PGFloat8, "0", "0"},
+		{"bool true", stream.PGBool, "true", "true"},
+		{"bool false", stream.PGBool, "false", "false"},
+		{"text empty", stream.PGText, `""`, `""`},
+		{"text unicode", stream.PGText, `"olá\nworld"`, `"olá\nworld"`},
+		{"json object as text", stream.PGJSON, `"{\"b\":2,\"a\":1}"`, `"{\"b\":2,\"a\":1}"`},
+		{"bytea ordinary", stream.PGBytea, `"3q2+7w=="`, `"3q2+7w=="`},
+		{"bytea raw base64", stream.PGBytea, `"3q2+7w"`, `"3q2+7w"`},
+		{"bytea empty", stream.PGBytea, `""`, `""`},
+		{"timestamp whole seconds", stream.PGTimestamp, `1704164645000000`, `"2024-01-02 03:04:05"`},
+		{"timestamp centiseconds", stream.PGTimestamp, `1704164645120000`, `"2024-01-02 03:04:05.12"`},
+		{"timestamp deciseconds", stream.PGTimestamp, `1704164645500000`, `"2024-01-02 03:04:05.5"`},
+		{"timestamp microseconds", stream.PGTimestamp, `1704164645123456`, `"2024-01-02 03:04:05.123456"`},
+		{"timestamptz offset to utc", stream.PGTimestamptz, `"2024-01-02T03:04:05.123456+05:30"`, `"2024-01-01 21:34:05.123456+00"`},
+		{"timestamptz zulu", stream.PGTimestamptz, `"2024-01-02T03:04:05Z"`, `"2024-01-02 03:04:05+00"`},
 	}
-	// The wire contract requires every one of the 300 zero digits.
-	got, err := ConvertValue(cases[0].typ, json.RawMessage(cases[0].raw), "large")
-	wantLarge := "1" + strings.Repeat("0", 300)
-	if err != nil || string(got) != wantLarge {
-		t.Fatalf("large decimal: %s %v", got, err)
-	}
-	for _, tc := range cases[1:] {
-		got, err := ConvertValue(tc.typ, json.RawMessage(tc.raw), "field")
-		if err != nil || string(got) != tc.want {
-			t.Errorf("%s: got %s %v want %s", tc.typ, got, err, tc.want)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ConvertValue(tc.typ, json.RawMessage(tc.raw), tc.name)
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("got %s %v want %s", got, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -51,78 +72,6 @@ func TestDecimalExpansionAllocationBoundary(t *testing.T) {
 	}
 }
 
-func TestConvertValueNumericMatrixPreservesLiterals(t *testing.T) {
-	cases := []struct {
-		name string
-		typ  stream.PGType
-		raw  string
-		want string
-	}{
-		{"int2 max", stream.PGInt2, "32767", "32767"},
-		{"int2 min", stream.PGInt2, "-32768", "-32768"},
-		{"int4 max", stream.PGInt4, "2147483647", "2147483647"},
-		{"int8 max", stream.PGInt8, "9223372036854775807", "9223372036854775807"},
-		{"int8 min", stream.PGInt8, "-9223372036854775808", "-9223372036854775808"},
-		{"float4 ordinary", stream.PGFloat4, "3.14", "3.14"},
-		{"float8 ordinary", stream.PGFloat8, "0.1", "0.1"},
-		{"float8 negative fraction", stream.PGFloat8, "-1.2300e-2", "-0.012300"},
-		{"float8 zero", stream.PGFloat8, "0", "0"},
-		{"bool true", stream.PGBool, "true", "true"},
-		{"bool false", stream.PGBool, "false", "false"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := ConvertValue(tc.typ, json.RawMessage(tc.raw), tc.name)
-			if err != nil || string(got) != tc.want {
-				t.Fatalf("got %s %v want %s", got, err, tc.want)
-			}
-		})
-	}
-}
-
-func TestConvertValueTextJSONAndBinaryMatrix(t *testing.T) {
-	cases := []struct {
-		name string
-		typ  stream.PGType
-		raw  string
-		want string
-	}{
-		{"text empty", stream.PGText, `""`, `""`},
-		{"text unicode", stream.PGText, `"olá\nworld"`, `"olá\nworld"`},
-		{"json object as text", stream.PGJSON, `"{\"b\":2,\"a\":1}"`, `"{\"b\":2,\"a\":1}"`},
-		{"bytea ordinary", stream.PGBytea, `"3q2+7w=="`, `"3q2+7w=="`},
-		{"bytea raw base64", stream.PGBytea, `"3q2+7w"`, `"3q2+7w"`},
-		{"bytea empty", stream.PGBytea, `""`, `""`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := ConvertValue(tc.typ, json.RawMessage(tc.raw), tc.name)
-			if err != nil || string(got) != tc.want {
-				t.Fatalf("got %s %v want %s", got, err, tc.want)
-			}
-		})
-	}
-}
-
-func TestConvertValueTimestampMatrix(t *testing.T) {
-	cases := []struct {
-		typ       stream.PGType
-		raw, want string
-	}{
-		{stream.PGTimestamp, `1704164645000000`, `"2024-01-02 03:04:05"`},
-		{stream.PGTimestamp, `1704164645120000`, `"2024-01-02 03:04:05.12"`},
-		{stream.PGTimestamp, `1704164645500000`, `"2024-01-02 03:04:05.5"`},
-		{stream.PGTimestamptz, `"2024-01-02T03:04:05.123456+05:30"`, `"2024-01-01 21:34:05.123456+00"`},
-		{stream.PGTimestamptz, `"2024-01-02T03:04:05Z"`, `"2024-01-02 03:04:05+00"`},
-	}
-	for _, tc := range cases {
-		got, err := ConvertValue(tc.typ, json.RawMessage(tc.raw), "timestamp")
-		if err != nil || string(got) != tc.want {
-			t.Errorf("%s %s: got %s %v want %s", tc.typ, tc.raw, got, err, tc.want)
-		}
-	}
-}
-
 func TestConvertValueNullIsCanonicalForEveryType(t *testing.T) {
 	for _, typ := range []stream.PGType{stream.PGInt2, stream.PGInt4, stream.PGInt8, stream.PGFloat4, stream.PGFloat8, stream.PGBool, stream.PGJSON, stream.PGBytea, stream.PGTimestamp, stream.PGTimestamptz, stream.PGText} {
 		got, err := ConvertValue(typ, json.RawMessage(" null "), "nullable")
@@ -139,7 +88,7 @@ func TestConvertValueErrorsNameFieldWithoutEchoingValue(t *testing.T) {
 		raw string
 	}{
 		{stream.PGInt2, `99999`}, {stream.PGInt4, `999999999999`}, {stream.PGInt8, `"` + secret + `"`},
-		{stream.PGFloat4, `1e999999999`}, {stream.PGFloat8, `1e999999999`}, {stream.PGBool, `1`},
+		{stream.PGFloat4, `1e999999999`}, {stream.PGFloat8, `1e999999999`}, {stream.PGFloat8, `"bad"`}, {stream.PGBool, `1`},
 		{stream.PGJSON, `"not json"`}, {stream.PGBytea, `"!"`}, {stream.PGText, `1`},
 		{stream.PGTimestamp, `"bad"`}, {stream.PGTimestamptz, `"bad"`},
 	}
@@ -163,21 +112,6 @@ func TestConvertValueRejectsDecimalExponentOutsideExpansionLimit(t *testing.T) {
 			if _, err := ConvertValue(typ, json.RawMessage(raw), "amount"); err == nil {
 				t.Errorf("%s accepted exponent %s", typ, raw)
 			}
-		}
-	}
-}
-
-func TestConvertValueRejectsMalformed(t *testing.T) {
-	for _, tc := range []struct {
-		typ stream.PGType
-		raw string
-	}{
-		{stream.PGInt8, `"bad"`}, {stream.PGFloat8, `"bad"`}, {stream.PGBool, `1`},
-		{stream.PGJSON, `"bad"`}, {stream.PGBytea, `"!"`}, {stream.PGText, `1`},
-		{stream.PGTimestamp, `"bad"`}, {stream.PGTimestamptz, `"bad"`},
-	} {
-		if _, err := ConvertValue(tc.typ, json.RawMessage(tc.raw), "field"); err == nil {
-			t.Errorf("%s accepted %s", tc.typ, tc.raw)
 		}
 	}
 }
@@ -267,39 +201,10 @@ func TestMatchesFilterFailsOpen(t *testing.T) {
 			t.Errorf("%s: got %v want %v", tc.payload, got, tc.want)
 		}
 	}
-	if !MatchesFilter(nil, []byte(`{bad`)) {
-		t.Fatal("nil filter must match")
-	}
-}
-
-func TestFilterFailsOpen(t *testing.T) {
-	f := &Filter{Column: "event_name", Values: []string{"Created"}}
-	if !MatchesFilter(f, []byte(`{"other":1}`)) || !MatchesFilter(f, []byte(`{"event_name":3}`)) || MatchesFilter(f, []byte(`{"event_name":"Deleted"}`)) {
-		t.Fatal("unexpected filter behavior")
-	}
-}
-
-func TestFilterMatrix(t *testing.T) {
-	filter := &Filter{Column: "event_name", Values: []string{"Created"}}
-	cases := []struct {
-		name, payload string
-		want          bool
-	}{
-		{"no filter", `{"event_name":"Deleted"}`, true}, {"matching string", `{"event_name":"Created"}`, true},
-		{"non-matching string", `{"event_name":"Deleted"}`, false}, {"missing column", `{"other":1}`, true},
-		{"non-string value", `{"event_name":3}`, true}, {"non-object payload", `"just text"`, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := MatchesFilter(func() *Filter {
-				if tc.name == "no filter" {
-					return nil
-				}
-				return filter
-			}(), []byte(tc.payload)); got != tc.want {
-				t.Fatalf("got %v want %v", got, tc.want)
-			}
-		})
+	for _, payload := range []string{`{bad`, `{"event_name":"Deleted"}`} {
+		if !MatchesFilter(nil, []byte(payload)) {
+			t.Fatalf("nil filter must match %s", payload)
+		}
 	}
 }
 

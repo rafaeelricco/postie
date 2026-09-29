@@ -283,17 +283,6 @@ func (g *apiGate) Block(source, reason string) {
 	g.blocks = append(g.blocks, struct{ source, reason string }{source, reason})
 }
 
-type apiSender struct {
-	outcome Outcome
-	err     error
-	calls   int
-}
-
-func (s *apiSender) Send(context.Context, stream.Record, []byte) (Outcome, error) {
-	s.calls++
-	return s.outcome, s.err
-}
-
 func apiRecord() stream.Record {
 	return stream.Record{
 		Source:  stream.Source{ID: "events", Description: "Event stream"},
@@ -302,7 +291,7 @@ func apiRecord() stream.Record {
 	}
 }
 
-func newAPIWorker(record stream.Record, store *apiSkipStore, gate *apiGate, sender *apiSender, log *activity.Log) *Worker {
+func newAPIWorker(record stream.Record, store *apiSkipStore, gate *apiGate, sender *fakeSender, log *activity.Log) *Worker {
 	processor := NewProcessor(Destination{ID: "projection", Description: "Projection"}, sender)
 	processor.Sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	return &Worker{
@@ -341,7 +330,7 @@ func TestWorkerProcessDecodeErrorDurablyBlocksBoundSource(t *testing.T) {
 
 func TestWorkerProcessExistingDurableSkipOnlyCommits(t *testing.T) {
 	store := &apiSkipStore{has: true}
-	sender := &apiSender{outcome: Delivered}
+	sender := &fakeSender{outcome: Delivered}
 	gate := &apiGate{allowed: true}
 	w := newAPIWorker(apiRecord(), store, gate, sender, activity.New(io.Discard))
 	commits := 0
@@ -357,7 +346,7 @@ func TestWorkerProcessExistingDurableSkipOnlyCommits(t *testing.T) {
 
 func TestWorkerProcessDeliveredLogsMetadataAndCommits(t *testing.T) {
 	store := &apiSkipStore{}
-	sender := &apiSender{outcome: Delivered}
+	sender := &fakeSender{outcome: Delivered}
 	log := activity.New(io.Discard)
 	w := newAPIWorker(apiRecord(), store, &apiGate{allowed: true}, sender, log)
 	commits := 0
@@ -383,7 +372,7 @@ func TestWorkerProcessDeliveredLogsMetadataAndCommits(t *testing.T) {
 
 func TestWorkerProcessFilteredCompletesWithoutSend(t *testing.T) {
 	store := &apiSkipStore{}
-	sender := &apiSender{outcome: Delivered}
+	sender := &fakeSender{outcome: Delivered}
 	log := activity.New(io.Discard)
 	w := newAPIWorker(apiRecord(), store, &apiGate{allowed: true}, sender, log)
 	w.Processor.Destination.Filter = &protocol.Filter{Column: "event_name", Values: []string{"Deleted"}}
@@ -402,7 +391,7 @@ func TestWorkerProcessFilteredCompletesWithoutSend(t *testing.T) {
 
 func TestWorkerProcessSkipAuditsBeforeCommit(t *testing.T) {
 	store := &apiSkipStore{}
-	sender := &apiSender{outcome: Skipped}
+	sender := &fakeSender{outcome: Skipped}
 	log := activity.New(io.Discard)
 	w := newAPIWorker(apiRecord(), store, &apiGate{allowed: true}, sender, log)
 	commits := 0
@@ -426,7 +415,7 @@ func TestWorkerProcessSkipAuditsBeforeCommit(t *testing.T) {
 
 func TestWorkerProcessCancellationStopsBeforeCommit(t *testing.T) {
 	store := &apiSkipStore{}
-	sender := &apiSender{err: context.Canceled}
+	sender := &fakeSender{errs: []error{context.Canceled}}
 	w := newAPIWorker(apiRecord(), store, &apiGate{allowed: true}, sender, activity.New(io.Discard))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

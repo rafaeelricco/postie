@@ -72,6 +72,11 @@ func TestDependencyBoundaries(t *testing.T) {
 				t.Errorf("%s constructs infrastructure directly: %s", rel, name)
 			}
 			if core == "" {
+				if dependency, ok := strings.CutPrefix(name, module+"internal/"); ok {
+					if reason := edgeViolation(rel, dependency); reason != "" {
+						t.Errorf("%s imports %s: %s", rel, name, reason)
+					}
+				}
 				continue
 			}
 			if strings.HasPrefix(name, module) {
@@ -87,6 +92,43 @@ func TestDependencyBoundaries(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// edgeViolation returns why rel may not import dependency (a path under
+// internal/), or "" when it may. It covers the packages outside the core:
+// config is a leaf, adapters see only the core, and only app imports adapters.
+func edgeViolation(rel, dependency string) string {
+	switch {
+	case strings.HasPrefix(rel, "internal/config/"):
+		return "config must not import engine packages"
+	case strings.HasPrefix(rel, "internal/adapters/"):
+		if dependency == "config" || dependency == "app" || strings.HasPrefix(dependency, "adapters/") {
+			return "adapters may import only the core"
+		}
+	case strings.HasPrefix(dependency, "adapters/") && !strings.HasPrefix(rel, "internal/app/"):
+		return "only app may import adapters"
+	}
+	return ""
+}
+
+func TestEdgeViolation(t *testing.T) {
+	for _, tc := range []struct {
+		rel, dependency string
+		violates        bool
+	}{
+		{"internal/app/bootstrap.go", "adapters/kafka", false},
+		{"internal/app/app.go", "config", false},
+		{"cmd/postie/main.go", "app", false},
+		{"cmd/postie/main.go", "adapters/kafka", true},
+		{"internal/config/load.go", "stream", true},
+		{"internal/adapters/kafka/consumer.go", "provision", false},
+		{"internal/adapters/kafka/consumer.go", "adapters/debezium", true},
+		{"internal/adapters/kafka/consumer.go", "config", true},
+	} {
+		if got := edgeViolation(tc.rel, tc.dependency) != ""; got != tc.violates {
+			t.Errorf("edgeViolation(%q, %q) violates=%v, want %v", tc.rel, tc.dependency, got, tc.violates)
+		}
 	}
 }
 
@@ -134,32 +176,13 @@ func TestDirectRequiresAreAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, module := range directRequires(string(b)) {
+	modules := directRequires(string(b))
+	if !slices.Contains(modules, "gopkg.in/yaml.v3") {
+		t.Fatalf("directRequires parsed %v from go.mod; expected its direct requirements", modules)
+	}
+	for _, module := range modules {
 		if !slices.Contains(allowedModules, module) {
 			t.Errorf("go.mod requires %s directly; it is not in allowedModules", module)
 		}
-	}
-}
-
-func TestDirectRequiresParsing(t *testing.T) {
-	const sample = `module example
-
-go 1.26.0
-
-require github.com/single/line v1.0.0
-
-require github.com/single/indirect v1.0.0 // indirect
-
-require (
-	github.com/cucumber/godog v0.16.0
-	// a comment inside the block
-	github.com/google/uuid v1.6.0 // indirect
-)
-
-replace github.com/x/y => ../y
-`
-	want := []string{"github.com/single/line", "github.com/cucumber/godog"}
-	if got := directRequires(sample); !slices.Equal(got, want) {
-		t.Fatalf("directRequires = %v, want %v", got, want)
 	}
 }

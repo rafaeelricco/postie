@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,119 +14,86 @@ import (
 )
 
 type serviceSourceFake struct {
-	mu          sync.Mutex
 	facts       TableFacts
 	inspectErr  error
 	slot        SlotStatus
 	slotErr     error
 	inspectCall int
-	slotCalls   []string
 }
 
 func (f *serviceSourceFake) InspectTable(context.Context) (TableFacts, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.inspectCall++
 	return f.facts, f.inspectErr
 }
 
-func (f *serviceSourceFake) SlotHealth(_ context.Context, slot string) (SlotStatus, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.slotCalls = append(f.slotCalls, slot)
+func (f *serviceSourceFake) SlotHealth(context.Context, string) (SlotStatus, error) {
 	return f.slot, f.slotErr
 }
 
 type serviceTopicsFake struct {
-	mu          sync.Mutex
 	topicID     [16]byte
 	ensureErr   error
 	topicFacts  TopicFacts
 	topicErr    error
 	ensureCalls int
-	topicCalls  []string
 	ensureNames stream.Names
 	ensureParts int32
 	ensureRepl  int16
 }
 
 func (f *serviceTopicsFake) EnsureTopic(_ context.Context, names stream.Names, partitions int32, replication int16) ([16]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.ensureCalls++
 	f.ensureNames, f.ensureParts, f.ensureRepl = names, partitions, replication
 	return f.topicID, f.ensureErr
 }
 
-func (f *serviceTopicsFake) Topic(_ context.Context, name string) (TopicFacts, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.topicCalls = append(f.topicCalls, name)
+func (f *serviceTopicsFake) Topic(context.Context, string) (TopicFacts, error) {
 	return f.topicFacts, f.topicErr
 }
 
 type serviceConnectorsFake struct {
-	mu             sync.Mutex
 	ensureErr      error
 	status         Status
 	statusErr      error
 	statusSequence []Status
-	statusErrors   []error
 	ensureCalls    int
 	statusCalls    []string
-	ensureSource   stream.Source
 	ensureIdentity stream.Identity
 	ensureNames    stream.Names
 	ensureMode     PublicationMode
 }
 
-func (f *serviceConnectorsFake) EnsureConnector(_ context.Context, source stream.Source, identity stream.Identity, names stream.Names, mode PublicationMode) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+func (f *serviceConnectorsFake) EnsureConnector(_ context.Context, _ stream.Source, identity stream.Identity, names stream.Names, mode PublicationMode) error {
 	f.ensureCalls++
-	f.ensureSource, f.ensureIdentity, f.ensureNames, f.ensureMode = source, identity, names, mode
+	f.ensureIdentity, f.ensureNames, f.ensureMode = identity, names, mode
 	return f.ensureErr
 }
 
 func (f *serviceConnectorsFake) ConnectorStatus(_ context.Context, name string) (Status, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.statusCalls = append(f.statusCalls, name)
 	if len(f.statusSequence) > 0 {
 		status := f.statusSequence[0]
 		f.statusSequence = f.statusSequence[1:]
-		var err error
-		if len(f.statusErrors) > 0 {
-			err = f.statusErrors[0]
-			f.statusErrors = f.statusErrors[1:]
-		}
-		return status, err
+		return status, nil
 	}
 	return f.status, f.statusErr
 }
 
 type serviceStoreFake struct {
-	mu            sync.Mutex
 	registered    stream.Registration
 	found         bool
 	getErr        error
 	registerErr   error
 	blockErr      error
-	getCalls      int
 	registerCalls int
 	blockCalls    []string
 }
 
 func (f *serviceStoreFake) GetStream(context.Context, stream.Scope, string) (stream.Registration, bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.getCalls++
 	return f.registered, f.found, f.getErr
 }
 
 func (f *serviceStoreFake) RegisterStream(_ context.Context, _ stream.Scope, registered stream.Registration) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.registerCalls++
 	if f.registerErr == nil {
 		f.registered = registered
@@ -137,8 +103,6 @@ func (f *serviceStoreFake) RegisterStream(_ context.Context, _ stream.Scope, reg
 }
 
 func (f *serviceStoreFake) BlockSource(_ context.Context, _ stream.Scope, source, reason string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.blockCalls = append(f.blockCalls, source+":"+reason)
 	return f.blockErr
 }
@@ -332,75 +296,45 @@ func TestProvisionSourceRegisteredTransientFailuresDoNotBlock(t *testing.T) {
 }
 
 func TestProvisionSourceStoreAndInfrastructureErrors(t *testing.T) {
-	t.Run("table inspection", func(t *testing.T) {
-		service, source, sf, _, _, store := newProvisionService(t)
-		sf.inspectErr = errors.New("database unavailable")
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || err.Error() != "database unavailable" || len(store.blockCalls) != 0 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
-	t.Run("contract table", func(t *testing.T) {
-		service, source, sf, _, _, store := newProvisionService(t)
-		sf.facts.Exists = false
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || !strings.Contains(err.Error(), "does not exist") || len(store.blockCalls) != 0 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
-	t.Run("store get", func(t *testing.T) {
-		service, source, _, _, _, store := newProvisionService(t)
-		store.getErr = errors.New("control unavailable")
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || err.Error() != "control unavailable" || len(store.blockCalls) != 0 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
-	t.Run("topic ensure", func(t *testing.T) {
-		service, source, _, topics, _, store := newProvisionService(t)
-		topics.ensureErr = errors.New("topic create failed")
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || err.Error() != "topic create failed" || len(store.blockCalls) != 0 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
-	t.Run("connector ensure", func(t *testing.T) {
-		service, source, _, _, connectors, store := newProvisionService(t)
-		connectors.ensureErr = errors.New("connector create failed")
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || err.Error() != "connector create failed" || len(store.blockCalls) != 0 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
-	t.Run("register", func(t *testing.T) {
-		service, source, _, _, _, store := newProvisionService(t)
-		store.registerErr = errors.New("control write failed")
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || err.Error() != "control write failed" || len(store.blockCalls) != 0 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
-	t.Run("blocked source", func(t *testing.T) {
-		service, source, _, _, _, store := newProvisionService(t)
-		store.found = true
-		store.registered = registeredFor(service, source, [16]byte{1, 2, 3})
-		store.registered.Blocked = "history lost"
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || err.Error() != "control: source is blocked: history lost" || len(store.blockCalls) != 0 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
-	t.Run("block failure", func(t *testing.T) {
-		service, source, _, topics, _, store := newProvisionService(t)
-		store.found = true
-		store.registered = registeredFor(service, source, [16]byte{1, 2, 3})
-		topics.topicFacts.Exists = false
-		store.blockErr = errors.New("control write failed")
-		_, err := service.ProvisionSource(context.Background(), source)
-		if err == nil || !strings.Contains(err.Error(), "block source: control write failed") || len(store.blockCalls) != 1 {
-			t.Fatalf("error=%v blocks=%v", err, store.blockCalls)
-		}
-	})
+	cases := []struct {
+		name    string
+		mutate  func(*Service, stream.Source, *serviceSourceFake, *serviceTopicsFake, *serviceConnectorsFake, *serviceStoreFake)
+		wantErr string
+	}{
+		{"table inspection", func(_ *Service, _ stream.Source, sf *serviceSourceFake, _ *serviceTopicsFake, _ *serviceConnectorsFake, _ *serviceStoreFake) {
+			sf.inspectErr = errors.New("database unavailable")
+		}, "database unavailable"},
+		{"contract table", func(_ *Service, _ stream.Source, sf *serviceSourceFake, _ *serviceTopicsFake, _ *serviceConnectorsFake, _ *serviceStoreFake) {
+			sf.facts.Exists = false
+		}, "capture: table public.event_store: does not exist"},
+		{"store get", func(_ *Service, _ stream.Source, _ *serviceSourceFake, _ *serviceTopicsFake, _ *serviceConnectorsFake, st *serviceStoreFake) {
+			st.getErr = errors.New("control unavailable")
+		}, "control unavailable"},
+		{"topic ensure", func(_ *Service, _ stream.Source, _ *serviceSourceFake, tp *serviceTopicsFake, _ *serviceConnectorsFake, _ *serviceStoreFake) {
+			tp.ensureErr = errors.New("topic create failed")
+		}, "topic create failed"},
+		{"connector ensure", func(_ *Service, _ stream.Source, _ *serviceSourceFake, _ *serviceTopicsFake, cf *serviceConnectorsFake, _ *serviceStoreFake) {
+			cf.ensureErr = errors.New("connector create failed")
+		}, "connector create failed"},
+		{"register", func(_ *Service, _ stream.Source, _ *serviceSourceFake, _ *serviceTopicsFake, _ *serviceConnectorsFake, st *serviceStoreFake) {
+			st.registerErr = errors.New("control write failed")
+		}, "control write failed"},
+		{"blocked source", func(s *Service, src stream.Source, _ *serviceSourceFake, _ *serviceTopicsFake, _ *serviceConnectorsFake, st *serviceStoreFake) {
+			st.found = true
+			st.registered = registeredFor(s, src, [16]byte{1, 2, 3})
+			st.registered.Blocked = "history lost"
+		}, "control: source is blocked: history lost"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			service, source, sf, topics, connectors, store := newProvisionService(t)
+			tc.mutate(service, source, sf, topics, connectors, store)
+			_, err := service.ProvisionSource(context.Background(), source)
+			if err == nil || err.Error() != tc.wantErr || len(store.blockCalls) != 0 {
+				t.Fatalf("error=%v blocks=%v, want error %q and no blocks", err, store.blockCalls, tc.wantErr)
+			}
+		})
+	}
 }
 
 func TestProvisionSourceContextCancellationStopsReadinessPoll(t *testing.T) {
@@ -535,6 +469,9 @@ func TestProvisionSourceRegisteredContractBlockFailureIsRetryable(t *testing.T) 
 	if err == nil || !strings.Contains(err.Error(), "capture: table public.event_store: established topic is missing") || !strings.Contains(err.Error(), "block source: store unavailable") {
 		t.Fatalf("block failure error = %v", err)
 	}
+	if len(store.blockCalls) != 1 {
+		t.Fatalf("BlockSource calls = %d, want 1", len(store.blockCalls))
+	}
 }
 
 func TestValidateReplicationSortsPartitionsInError(t *testing.T) {
@@ -581,44 +518,94 @@ func testIdentity(src stream.Source) stream.Identity {
 	return stream.Identity{Table: src.Table, SerialColumn: src.SerialColumn, PartitioningColumn: src.PartitioningColumn, Columns: columns}
 }
 
-func TestNamesForIsDeterministicAndValid(t *testing.T) {
-	cases := []struct {
-		name        string
-		namespace   string
-		environment string
-		src         stream.Source
-		generation  stream.Generation
-	}{
-		{"simple", "postie", "production", stream.Source{ID: "orders", Table: "event_store"}, 1},
-		{"max-generation", "postie", "production", stream.Source{ID: "orders", Table: "event_store"}, stream.Generation(int(^uint(0) >> 1))},
-		{"dots-in-ids", "multi.tenant", "prod.us-east", stream.Source{ID: "src.one", Table: "event_store"}, 2},
-		{"uppercase", "Postie", "Production", stream.Source{ID: "Orders-ID", Table: "Event_Store"}, 3},
-		{"very-long", "namespace-that-is-quite-long-indeed", "environment-also-rather-long", stream.Source{ID: "a-source-identifier-that-goes-on-and-on-and-on-for-a-while", Table: "event_store"}, 7},
-		{"very-long-2", "namespace-that-is-quite-long-indeed", "environment-also-rather-long", stream.Source{ID: "a-source-identifier-that-goes-on-and-on-and-on-for-a-while-too", Table: "event_store"}, 7},
+func TestNamesFor(t *testing.T) {
+	fields := func(n stream.Names) []string {
+		return []string{n.TopicPrefix, n.Topic, n.Connector, n.Slot, n.Publication}
 	}
-	results := map[string]stream.Names{}
-	for _, c := range cases {
-		n := NamesFor(c.namespace, c.environment, c.src, c.generation)
-		results[c.name] = n
-		if !validIdentifier.MatchString(n.Slot) || !validIdentifier.MatchString(n.Publication) {
-			t.Errorf("%s: resource name is invalid: %+v", c.name, n)
+
+	t.Run("valid and deterministic", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			namespace   string
+			environment string
+			src         stream.Source
+			generation  stream.Generation
+		}{
+			{"simple", "postie", "production", stream.Source{ID: "orders", Table: "event_store"}, 1},
+			{"max-generation", "postie", "production", stream.Source{ID: "orders", Table: "event_store"}, stream.Generation(int(^uint(0) >> 1))},
+			{"dots-in-ids", "multi.tenant", "prod.us-east", stream.Source{ID: "src.one", Table: "event_store"}, 2},
+			{"uppercase", "Postie", "Production", stream.Source{ID: "Orders-ID", Table: "Event_Store"}, 3},
+			{"very-long", "namespace-that-is-quite-long-indeed", "environment-also-rather-long", stream.Source{ID: "a-source-identifier-that-goes-on-and-on-and-on-for-a-while", Table: "event_store"}, 7},
+			{"very-long-2", "namespace-that-is-quite-long-indeed", "environment-also-rather-long", stream.Source{ID: "a-source-identifier-that-goes-on-and-on-and-on-for-a-while-too", Table: "event_store"}, 7},
 		}
-		if !strings.HasPrefix(n.Slot, "postie_") || !strings.HasPrefix(n.Publication, "postie_") {
-			t.Errorf("%s: resource names do not have postie_ prefix: %+v", c.name, n)
+		results := map[string]stream.Names{}
+		for _, c := range cases {
+			n := NamesFor(c.namespace, c.environment, c.src, c.generation)
+			results[c.name] = n
+			if !validIdentifier.MatchString(n.Slot) || !validIdentifier.MatchString(n.Publication) {
+				t.Errorf("%s: resource name is invalid: %+v", c.name, n)
+			}
+			if !strings.HasPrefix(n.Slot, "postie_") || !strings.HasPrefix(n.Publication, "postie_") {
+				t.Errorf("%s: resource names do not have postie_ prefix: %+v", c.name, n)
+			}
+			if again := NamesFor(c.namespace, c.environment, c.src, c.generation); again != n {
+				t.Errorf("%s: NamesFor is not deterministic: %+v != %+v", c.name, again, n)
+			}
+			if n.Topic != n.TopicPrefix+".public."+c.src.Table {
+				t.Errorf("%s: Topic = %q", c.name, n.Topic)
+			}
+			if strings.Contains(n.Connector, ".") {
+				t.Errorf("%s: Connector %q still contains a dot", c.name, n.Connector)
+			}
 		}
-		if again := NamesFor(c.namespace, c.environment, c.src, c.generation); again != n {
-			t.Errorf("%s: NamesFor is not deterministic: %+v != %+v", c.name, again, n)
+		if results["very-long"].Slot == results["very-long-2"].Slot || results["very-long"].Publication == results["very-long-2"].Publication {
+			t.Fatal("two different long source ids produced the same resource name")
 		}
-		if n.Topic != n.TopicPrefix+".public."+c.src.Table {
-			t.Errorf("%s: Topic = %q", c.name, n.Topic)
+	})
+
+	t.Run("distinct tuples do not collide", func(t *testing.T) {
+		type tuple struct {
+			namespace   string
+			environment string
+			sourceID    string
 		}
-		if strings.Contains(n.Connector, ".") {
-			t.Errorf("%s: Connector %q still contains a dot", c.name, n.Connector)
+		tuples := []tuple{
+			{"ns", "dev", "orders.v1"},
+			{"ns", "dev", "orders-v1"},
+			{"ns", "dev", "orders_v1"},
+			{"ns", "dev", "Orders_v1"},
+			{"a.b", "c", "orders"},
+			{"a", "b.c", "orders"},
 		}
-	}
-	if results["very-long"].Slot == results["very-long-2"].Slot || results["very-long"].Publication == results["very-long-2"].Publication {
-		t.Fatal("two different long source ids produced the same resource name")
-	}
+		all := make([][]string, len(tuples))
+		for i, tc := range tuples {
+			all[i] = fields(NamesFor(tc.namespace, tc.environment, stream.Source{ID: tc.sourceID, Table: "events"}, 1))
+			for j, got := range all[i] {
+				if got == "" {
+					t.Errorf("tuple %d resource field %d is empty", i, j)
+				}
+			}
+		}
+		for i := range all {
+			for j := i + 1; j < len(all); j++ {
+				for k := range all[i] {
+					if all[i][k] == all[j][k] {
+						t.Errorf("resource field %d collides for tuples %d and %d: %q", k, i, j, all[i][k])
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("generation changes every name", func(t *testing.T) {
+		generationOne := fields(NamesFor("ns", "dev", stream.Source{ID: "orders", Table: "events"}, 1))
+		generationTwo := fields(NamesFor("ns", "dev", stream.Source{ID: "orders", Table: "events"}, 2))
+		for i := range generationOne {
+			if generationOne[i] == generationTwo[i] {
+				t.Errorf("resource field %d did not change between generations: %q", i, generationOne[i])
+			}
+		}
+	})
 }
 
 func TestIdentityFromRejections(t *testing.T) {
@@ -705,74 +692,5 @@ func TestIdentityFromAcceptsNullableJSON(t *testing.T) {
 	want.Columns[2].Type = stream.PGJSON
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("IdentityFrom() = %+v, want %+v", got, want)
-	}
-}
-
-func TestRegression_CaptureNamesPreserveIdentity(t *testing.T) {
-	type tuple struct {
-		namespace   string
-		environment string
-		sourceID    string
-	}
-	tuples := []tuple{
-		{"ns", "dev", "orders.v1"},
-		{"ns", "dev", "orders-v1"},
-		{"ns", "dev", "orders_v1"},
-		{"ns", "dev", "Orders_v1"},
-		{"a.b", "c", "orders"},
-		{"a", "b.c", "orders"},
-	}
-	fields := func(n stream.Names) []string {
-		return []string{n.TopicPrefix, n.Topic, n.Connector, n.Slot, n.Publication}
-	}
-
-	all := make([][]string, len(tuples))
-	for i, tc := range tuples {
-		n := NamesFor(tc.namespace, tc.environment, stream.Source{ID: tc.sourceID, Table: "events"}, 1)
-		all[i] = fields(n)
-		for j, got := range all[i] {
-			if got == "" {
-				t.Errorf("tuple %d resource field %d is empty", i, j)
-			}
-		}
-	}
-	for i := range all {
-		for j := i + 1; j < len(all); j++ {
-			for k := range fields(NamesFor("ns", "dev", stream.Source{ID: "orders", Table: "events"}, 1)) {
-				if all[i][k] == all[j][k] {
-					t.Errorf("resource field %d collides for tuples %d and %d: %q", k, i, j, all[i][k])
-				}
-			}
-		}
-	}
-
-	longBase := strings.Repeat("source-", 14)
-	longA := NamesFor("a-very-long-namespace", "a-very-long-environment", stream.Source{ID: longBase + "alpha", Table: "events"}, 1)
-	longB := NamesFor("a-very-long-namespace", "a-very-long-environment", stream.Source{ID: longBase + "bravo", Table: "events"}, 1)
-	if longA.Slot == longB.Slot || longA.Publication == longB.Publication {
-		t.Fatalf("long source IDs differing only in their suffix collided: A=%+v B=%+v", longA, longB)
-	}
-	if again := NamesFor("a-very-long-namespace", "a-very-long-environment", stream.Source{ID: longBase + "alpha", Table: "events"}, 1); again != longA {
-		t.Fatalf("NamesFor is not deterministic: first=%+v again=%+v", longA, again)
-	}
-	generationOne := fields(NamesFor("ns", "dev", stream.Source{ID: "orders", Table: "events"}, 1))
-	generationTwo := fields(NamesFor("ns", "dev", stream.Source{ID: "orders", Table: "events"}, 2))
-	for i := range generationOne {
-		if generationOne[i] == generationTwo[i] {
-			t.Errorf("resource field %d did not change between generations: %q", i, generationOne[i])
-		}
-	}
-
-	maxGeneration := stream.Generation(int(^uint(0) >> 1))
-	maxNames := NamesFor(strings.Repeat("n", 24), strings.Repeat("e", 24), stream.Source{ID: strings.Repeat("s", 24), Table: "events"}, maxGeneration)
-	for label, value := range map[string]string{"slot": maxNames.Slot, "publication": maxNames.Publication} {
-		if len(value) > 63 {
-			t.Errorf("%s name length = %d, want <= 63: %q", label, len(value), value)
-		}
-		for _, r := range value {
-			if !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '_' {
-				t.Errorf("%s name contains invalid PostgreSQL identifier rune %U: %q", label, r, value)
-			}
-		}
 	}
 }

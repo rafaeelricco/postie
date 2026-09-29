@@ -1,2 +1,0 @@
-# HTTP acknowledgement bodies. Some are intentionally invalid JSON.
-tests/regression/testdata/acks/

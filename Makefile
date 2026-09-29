@@ -8,7 +8,7 @@ comma       := ,
 empty       :=
 space       := $(empty) $(empty)
 
-.PHONY: lint test unit bdd contract regression architecture fuzz cover mutation integration quality
+.PHONY: lint test unit architecture fuzz cover mutation integration quality
 
 lint:
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -19,26 +19,17 @@ test:
 	$(GO) test -count=1 -race ./...
 
 unit:
-	$(GO) test -count=1 ./tests/unit/... ./internal/... ./cmd/...
-
-bdd:
-	$(GO) test -count=1 ./tests/bdd
-
-contract:
-	$(GO) test -count=1 ./tests/contract
+	$(GO) test -count=1 ./internal/... ./cmd/...
 
 architecture:
 	$(GO) test -count=1 ./tests/architecture
 
-regression:
-	$(GO) test -count=1 ./tests/regression
-
 fuzz:
-	$(GO) test -run='^$$' -fuzz=FuzzDecodeAcknowledgement -fuzztime=$(FUZZTIME) ./tests/unit/protocol
-	$(GO) test -run='^$$' -fuzz=FuzzMatchesFilter -fuzztime=$(FUZZTIME) ./tests/unit/protocol
-	$(GO) test -run='^$$' -fuzz=FuzzDecode -fuzztime=$(FUZZTIME) ./tests/unit/adapters/debezium
+	$(GO) test -run='^$$' -fuzz=FuzzDecodeAcknowledgement -fuzztime=$(FUZZTIME) ./internal/protocol
+	$(GO) test -run='^$$' -fuzz=FuzzMatchesFilter -fuzztime=$(FUZZTIME) ./internal/protocol
+	$(GO) test -run='^$$' -fuzz=FuzzDecode -fuzztime=$(FUZZTIME) ./internal/adapters/debezium
 
-# Unit, BDD, contract and regression tests all count toward the gated packages.
+# Every offline test counts toward the gated packages.
 cover:
 	$(GO) test -count=1 -race -coverpkg=$(subst $(space),$(comma),$(GATED)) -coverprofile=coverage.out ./...
 	@$(GO) tool cover -func=coverage.out | awk -v min=$(COVER_MIN) '/^total:/ { sub("%","",$$3); \
@@ -49,9 +40,9 @@ cover:
 # gremlins exits 0 with nothing killed. So: cold cache, a generous coefficient,
 # and a run that killed nothing fails instead of passing. Gremlins v0.6.0 also
 # exits 0 below --threshold-efficacy, so the floor is enforced here.
-# Black-box unit tests live in tests/unit, outside the mutated package, so each
-# mutant runs the whole offline suite (--integration) and coverage is attributed
-# across packages (--coverpkg).
+# Some tests exercise several packages (the decode-to-HTTP pipeline test lives in
+# httpdelivery), so each mutant runs the whole offline suite (--integration) and
+# coverage is attributed across packages (--coverpkg).
 mutation:
 	@$(GO) clean -testcache
 	@for p in $(GATED:/...=); do \

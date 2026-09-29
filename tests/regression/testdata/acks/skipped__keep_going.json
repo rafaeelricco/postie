@@ -1,5 +1,0 @@
-{
-  "result": {
-    "error": { "policy": "keep_going", "class": "c", "description": "d" }
-  }
-}

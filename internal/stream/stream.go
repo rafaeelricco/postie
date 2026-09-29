@@ -52,14 +52,19 @@ func (g Generation) String() string { return strconv.Itoa(int(g)) }
 
 // Record is the decoded event delivered to destinations.
 type Record struct {
-	Source     Source
-	Payload    json.RawMessage
-	Topic      string
-	Partition  int32
-	Offset     int64
-	EventID    string
-	Generation Generation
-	Replay     bool
+	Source    Source
+	Payload   json.RawMessage
+	Topic     string
+	Partition int32
+	Offset    int64
+	EventID   string
+	// AggregateID and EventName are the optional business identifiers the
+	// activity log is searchable by. Decode reads them while it already has
+	// the row image, so nothing re-parses the payload to find them.
+	AggregateID string
+	EventName   string
+	Generation  Generation
+	Replay      bool
 }
 
 // RawRecord is the broker-level event before payload decoding.

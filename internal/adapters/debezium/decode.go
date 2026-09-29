@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 
 	"github.com/rafaeelricco/postie/internal/protocol"
 	"github.com/rafaeelricco/postie/internal/stream"
@@ -42,8 +41,25 @@ func Decode(source stream.Source, identity stream.Identity, generation stream.Ge
 	}
 	return stream.Record{
 		Source: source, Payload: payload, EventID: eventID, Generation: generation,
-		Topic: record.Topic, Partition: record.Partition, Offset: record.Offset,
+		AggregateID: optionalString(values, "aggregate_id"),
+		EventName:   optionalString(values, "event_name"),
+		Topic:       record.Topic, Partition: record.Partition, Offset: record.Offset,
 	}, nil
+}
+
+// optionalString reads one converted column as a string, or "" when it is
+// absent or not a JSON string. These identifiers are for the operator log,
+// so a payload without them is normal and never an error.
+func optionalString(values map[string]json.RawMessage, column string) string {
+	raw, ok := values[column]
+	if !ok {
+		return ""
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return value
 }
 
 // afterObject validates the envelope (operation, source metadata, Kafka key)
@@ -242,13 +258,10 @@ func decodeObject(raw []byte, name string) (map[string]json.RawMessage, error) {
 		return nil, errorsf("%s is empty", name)
 	}
 	var object map[string]json.RawMessage
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if err := decoder.Decode(&object); err != nil || object == nil {
+	// Unmarshal rejects trailing data itself. The second decode only
+	// re-materialized the tail into an any before discarding it.
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, errorsf("%s is not a JSON object", name)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, errorsf("%s has trailing data", name)
 	}
 	return object, nil
 }

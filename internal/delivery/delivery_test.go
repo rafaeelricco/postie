@@ -288,6 +288,7 @@ func apiRecord() stream.Record {
 		Source:  stream.Source{ID: "events", Description: "Event stream"},
 		Payload: []byte(`{"aggregate_id":"agg-1","event_name":"Created"}`),
 		Topic:   "events.topic", Partition: 2, Offset: 9, EventID: "event-9", Generation: 3,
+		AggregateID: "agg-1", EventName: "Created",
 	}
 }
 

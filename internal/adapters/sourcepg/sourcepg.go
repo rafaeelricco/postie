@@ -2,7 +2,10 @@ package sourcepg
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 
@@ -75,4 +78,58 @@ func (c Client) InspectTable(ctx context.Context) (provision.TableFacts, error) 
 		return provision.TableFacts{}, fmt.Errorf("capture: check unique index on serialColumn %q: %w", c.Source.SerialColumn, err)
 	}
 	return provision.TableFacts{Exists: true, Columns: columns, SerialUniqueIndex: serialUniqueIndex}, nil
+}
+
+// Connection contains source database credentials and connection settings.
+type Connection struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	Database string
+}
+
+// Client inspects one configured PostgreSQL source.
+type Client struct {
+	Source     stream.Source
+	Connection Connection
+}
+
+func connString(c Connection) string {
+	u := url.URL{Scheme: "postgres", User: url.UserPassword(c.Username, c.Password), Host: c.Host + ":" + strconv.Itoa(c.Port), Path: "/" + c.Database}
+	return u.String()
+}
+
+// SlotHealth reports whether the named replication slot exists and, if so,
+// whether it is active, its WAL status, and how many bytes of WAL it is
+// lagging behind the current position. It is read-only and opens and closes
+// its own connection each call.
+func (c Client) SlotHealth(ctx context.Context, slot string) (provision.SlotStatus, error) {
+	conn, err := pgx.Connect(ctx, connString(c.Connection))
+	if err != nil {
+		return provision.SlotStatus{}, fmt.Errorf("capture: connect to %s: %w", c.Source.ID, err)
+	}
+	defer conn.Close(ctx)
+	var active bool
+	var walStatus *string
+	var lagBytes *int64
+	err = conn.QueryRow(ctx, `
+		SELECT active, wal_status, pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)::bigint
+		FROM pg_replication_slots
+		WHERE slot_name = $1
+	`, slot).Scan(&active, &walStatus, &lagBytes)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return provision.SlotStatus{Exists: false}, nil
+		}
+		return provision.SlotStatus{}, fmt.Errorf("capture: query pg_replication_slots for %q: %w", slot, err)
+	}
+	status := provision.SlotStatus{Exists: true, Active: active}
+	if walStatus != nil {
+		status.WALStatus = provision.WALStatus(*walStatus)
+	}
+	if lagBytes != nil {
+		status.LagBytes = *lagBytes
+	}
+	return status, nil
 }

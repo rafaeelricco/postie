@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -244,4 +245,145 @@ func (w *partitionWorker) process(raw *kgo.Record) error {
 	return w.consumer.process(w.ctx, record, func(ctx context.Context, position *stream.RawRecord) error {
 		return w.commit(ctx, &kgo.Record{Topic: position.Topic, Partition: position.Partition, Offset: position.Offset, LeaderEpoch: position.LeaderEpoch})
 	})
+}
+
+func (w *partitionWorker) initialize() error {
+	c := w.consumer
+	source := c.sources[w.key.topic]
+	return retry(w.ctx, time.Second, func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		committed, err := c.admin.Client.FetchOffsets(ctx, c.group)
+		if err != nil {
+			return err
+		}
+		start, err := c.admin.Client.ListStartOffsets(ctx, w.key.topic)
+		if err != nil {
+			return err
+		}
+		end, err := c.admin.Client.ListEndOffsets(ctx, w.key.topic)
+		if err != nil {
+			return err
+		}
+		first, exists := start.Lookup(w.key.topic, w.key.partition)
+		if !exists || first.Err != nil {
+			return fmt.Errorf("partition start unavailable")
+		}
+		last, exists := end.Lookup(w.key.topic, w.key.partition)
+		if !exists || last.Err != nil {
+			return fmt.Errorf("partition end unavailable")
+		}
+		offset, exists := committed.Lookup(w.key.topic, w.key.partition)
+		if exists && offset.Err != nil {
+			return offset.Err
+		}
+		started, err := c.store.PartitionStarted(ctx, c.scope, c.destination, w.key.topic, w.key.partition)
+		if err != nil {
+			return err
+		}
+		if !exists || offset.At < 0 {
+			if started || first.Offset != 0 {
+				c.dispatch.Block(source.ID, "established consumer offsets or history lost")
+				w.cancel()
+				return context.Canceled
+			}
+			// Establish a durable baseline before marking this partition as started.
+			if err := w.commit(ctx, &kgo.Record{Topic: w.key.topic, Partition: w.key.partition, Offset: first.Offset - 1, LeaderEpoch: -1}); err != nil {
+				return err
+			}
+		} else if offset.At < first.Offset || offset.At > last.Offset {
+			c.dispatch.Block(source.ID, "committed offset is outside retained history")
+			w.cancel()
+			return context.Canceled
+		}
+		return c.store.MarkPartitionStarted(ctx, c.scope, c.destination, w.key.topic, w.key.partition)
+	})
+}
+
+func (w *partitionWorker) commit(ctx context.Context, record *kgo.Record) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.owned || w.ctx.Err() != nil || !w.consumer.dispatch.Allowed(w.consumer.sources[w.key.topic].ID) {
+		return context.Canceled
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return w.consumer.client.CommitRecords(ctx, record)
+}
+
+func retry(ctx context.Context, delay time.Duration, fn func(context.Context) error) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := fn(ctx); err == nil {
+			return nil
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *Consumer) onAssigned(ctx context.Context, cl *kgo.Client, partitions map[string][]int32) {
+	c.mu.Lock()
+	c.assigned = true
+	for topic, ps := range partitions {
+		for _, partition := range ps {
+			key := partitionKey{topic, partition}
+			if _, exists := c.workers[key]; exists {
+				continue
+			}
+			workerCtx, cancel := context.WithCancel(c.ctx)
+			w := &partitionWorker{consumer: c, key: key, ctx: workerCtx, cancel: cancel, done: make(chan struct{}), batches: make(chan []*kgo.Record, 1), owned: true}
+			c.workers[key] = w
+			go w.run()
+		}
+	}
+	c.mu.Unlock()
+	cl.ResumeFetchPartitions(partitions)
+	c.log.Add(activity.Entry{Message: "partitions assigned", Destination: c.destination})
+}
+
+func (c *Consumer) onRevoked(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
+	c.stopWorkers(partitions)
+	c.log.Add(activity.Entry{Message: "partitions revoked", Destination: c.destination})
+}
+
+func (c *Consumer) onLost(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
+	c.mu.Lock()
+	c.assigned = false
+	c.mu.Unlock()
+	c.stopWorkers(partitions)
+	c.log.Add(activity.Entry{Level: "warn", Message: "partition ownership lost", Destination: c.destination})
+	c.dispatch.Signal()
+}
+
+func (c *Consumer) stopWorkers(partitions map[string][]int32) {
+	c.mu.Lock()
+	workers := []*partitionWorker{}
+	for key, w := range c.workers {
+		remove := partitions == nil
+		for _, partition := range partitions[key.topic] {
+			if partition == key.partition {
+				remove = true
+			}
+		}
+		if remove {
+			w.cancel()
+			workers = append(workers, w)
+			delete(c.workers, key)
+		}
+	}
+	c.mu.Unlock()
+	for _, w := range workers {
+		w.mu.Lock()
+		w.owned = false
+		w.mu.Unlock()
+		<-w.done
+	}
 }

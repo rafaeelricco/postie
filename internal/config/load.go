@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -101,3 +103,112 @@ func expandScalars(scalars []*yaml.Node, lookup func(string) (string, bool)) err
 	}
 	return nil
 }
+
+var environmentVariable = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// ExpandEnvironment replaces every ${NAME} using lookup. It reports all
+// unset names, sorted and deduplicated, and substitutes nothing on error.
+//
+//	ExpandEnvironment("postgres://${DB_USER}@db", os.LookupEnv)
+//	// "postgres://postie@db", nil
+//	// "", environment variable DB_USER is not set
+func ExpandEnvironment(s string, lookup func(string) (string, bool)) (string, error) {
+	if missing := missingVariables(s, lookup); len(missing) > 0 {
+		return "", missingError(missing)
+	}
+	return environmentVariable.ReplaceAllStringFunc(s, func(match string) string {
+		value, _ := lookup(variableName(match))
+		return value
+	}), nil
+}
+
+// variableName extracts NAME from a "${NAME}" match.
+func variableName(match string) string {
+	return environmentVariable.FindStringSubmatch(match)[1]
+}
+
+// missingVariables lists the referenced names lookup does not know, sorted
+// and without duplicates.
+func missingVariables(s string, lookup func(string) (string, bool)) []string {
+	var missing []string
+	for _, match := range environmentVariable.FindAllStringSubmatch(s, -1) {
+		if _, ok := lookup(match[1]); !ok {
+			missing = append(missing, match[1])
+		}
+	}
+	slices.Sort(missing)
+	return slices.Compact(missing)
+}
+
+func missingError(names []string) error {
+	if len(names) == 1 {
+		return fmt.Errorf("environment variable %s is not set", names[0])
+	}
+	return fmt.Errorf("environment variables %s are not set", strings.Join(names, ", "))
+}
+
+const redactedPassword = "[REDACTED]"
+
+// OperatorToken resolves the operator bearer token. A configured token file
+// wins over the environment and must be readable; the result is trimmed and
+// must not be empty.
+//
+//	token, err := config.OperatorToken(os.Getenv("POSTIE_OPERATOR_TOKEN"), engine.Operator.TokenFile, os.ReadFile)
+func OperatorToken(env, file string, readFile func(string) ([]byte, error)) (string, error) {
+	token := env
+	if file != "" {
+		b, err := readFile(file)
+		if err != nil {
+			return "", fmt.Errorf("operator token file: %w", err)
+		}
+		token = string(b)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", fmt.Errorf("operator token is required: set POSTIE_OPERATOR_TOKEN or operator.token_file")
+	}
+	return token, nil
+}
+
+// Redacted returns a copy safe for logs and control-store revisions. It is a
+// deep copy: changing the result never changes the receiver.
+func (c Application) Redacted() Application {
+	redacted := Application{
+		Sources:      make([]Source, len(c.Sources)),
+		Destinations: make([]Destination, len(c.Destinations)),
+	}
+	for i, s := range c.Sources {
+		redacted.Sources[i] = redactSource(s)
+	}
+	for i, d := range c.Destinations {
+		redacted.Destinations[i] = redactDestination(d)
+	}
+	return redacted
+}
+
+func redactSource(s Source) Source {
+	s.Columns = cloneStrings(s.Columns)
+	s.Password = redactPassword(s.Password)
+	return s
+}
+
+func redactDestination(d Destination) Destination {
+	d.Sources = cloneStrings(d.Sources)
+	d.Password = redactPassword(d.Password)
+	if d.Filter != nil {
+		d.Filter = &Filter{Column: d.Filter.Column, Values: cloneStrings(d.Filter.Values)}
+	}
+	return d
+}
+
+// redactPassword hides a password but keeps "" as is, so the output still
+// shows whether one was configured.
+func redactPassword(password string) string {
+	if password == "" {
+		return ""
+	}
+	return redactedPassword
+}
+
+// cloneStrings copies a slice; nil and empty both become nil.
+func cloneStrings(items []string) []string { return append([]string(nil), items...) }

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
-	"github.com/rafaeelricco/postie/internal/control"
-	streams "github.com/rafaeelricco/postie/internal/stream"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/rafaeelricco/postie/internal/control"
+	streams "github.com/rafaeelricco/postie/internal/stream"
 )
 
 // EnsureSubscriptions inserts a "running" subscription at revision 1 for
@@ -120,7 +122,6 @@ func (s *Store) ObserveSubscription(ctx context.Context, scope streams.Scope, wo
 // SubscriptionObserved reports whether every currently unexpired worker lease
 // for the scope has observed the requested destination revision and state.
 // A scope with no unexpired leases is never considered observed.
-
 func (s *Store) SubscriptionObserved(ctx context.Context, scope streams.Scope, destination string, revision int64, state string) (bool, error) {
 	if err := validScope(scope); err != nil {
 		return false, err

@@ -242,7 +242,6 @@ func (s *Store) SaveSkip(ctx context.Context, scope streams.Scope, destination s
 // HasSkip reports whether the terminal skip for this destination and Kafka
 // position has already been recorded. It is used before a retry after a
 // process crash so a terminal destination acknowledgement is not repeated.
-
 func (s *Store) HasSkip(ctx context.Context, scope streams.Scope, destination string, record streams.Record) (bool, error) {
 	if err := validScope(scope); err != nil {
 		return false, err

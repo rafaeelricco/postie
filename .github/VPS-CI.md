@@ -1,10 +1,12 @@
 # VPS CI setup
 
-GitHub Actions schedules these jobs; the `r1cco-ci` runner executes them on the VPS. GitHub artifact storage and external deployment or package services remain separate.
+GitHub Actions schedules these jobs; the dedicated `VPS-CI-postie` runner executes them on `r1cco.com`. GitHub artifact storage and external deployment or package services remain separate.
 
-Before enabling this routing, register a runner for this repository under its own unprivileged Linux account and home directory. Use `--no-default-labels --labels r1cco-ci`; do not add `r1cco-ci` to an existing production deployment runner. The custom-only label keeps generic `self-hosted` deployment jobs on their existing runners.
+The runner uses the unprivileged `ci-postie` account and private home `/srv/r1cco-ci/postie`. Register it with `--no-default-labels --labels r1cco-ci`; do not add this label to a production deployment runner. The custom-only label keeps generic `self-hosted` deployment jobs on their existing runners. The account has no sudo or production Docker access.
 
-Give the account a writable tool cache and only its own workspace. Do not add it to the host Docker or sudo groups. For Docker jobs, provision an isolated rootless daemon and its socket for that account. Set `DOCKER_HOST` in the runner service environment and verify `docker info` reports rootless operation from that service account; job containers and services start before workflow steps, so a shell-only Docker context is insufficient. Bound aggregate CI CPU, memory, concurrency, and disk usage before enabling additional repository runners on the shared VPS.
+Each account has its own workspace and tool cache. Docker-dependent repositories use a dedicated rootless daemon and service-level `DOCKER_HOST`; verify `docker info` reports rootless operation. Published container ports default to 127.0.0.1. Rootless Docker must retain systemd's canonical `user-UID.slice` hierarchy. That slice bounds the runner and its Docker processes together to 250% CPU and 4 GiB memory.
+
+A root-owned job hook serializes CI across these runners and Nod, holding the slot until Runner.Worker exits after cleanup. Admission requires 6 GiB free disk. The per-repository memory limits and serialization are not a hard aggregate cap; monitor idle services, caches, and production headroom. Inspect and remove abandoned containers only through the relevant CI account's rootless socket.
 
 For public repositories, require workflow approval for all external contributors and do not approve fork runs on this VPS. Workflow conditions reject fork PR code; trusted comment automation may inspect PR metadata before refusing an external head. Repository administrators must preserve these controls when changing workflows.
 
@@ -14,6 +16,6 @@ For public repositories, require workflow approval for all external contributors
 - Rootless Docker with Buildx, and an isolated builder capable of linux/amd64 and linux/arm64 builds. Provision any emulation administratively; do not give CI the production Docker socket.
 - Existing GHCR publication and GitHub release behavior is preserved, but must be validated before activation without publishing a release as a test.
 
-## Activation verification
+## Verification and activation
 
-Keep the migration PR in draft until the dedicated runner is registered, online, and its prerequisites are installed. Run the applicable non-publishing checks on a trusted branch, confirm the runner name in GitHub job details, and inspect the final logs. Release and production deployment jobs require a separate deliberate activation; do not run them merely to test runner registration.
+Run applicable non-publishing checks on the migration branch, confirm `VPS-CI-postie` in GitHub job details, and inspect completed results before merging this PR. Native macOS/Windows coverage and unsupported npm trusted publishing remain disabled where documented above. Release and production deployment jobs require deliberate activation; do not execute them merely to test runner registration.

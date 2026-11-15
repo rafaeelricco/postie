@@ -18,9 +18,10 @@ concurrency:
 
 jobs:
   checks:
-    if: github.event_name == 'pull_request' || github.event.pull_request.merged
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'pull_request_target' && github.event.pull_request.merged)
+    runs-on: r1cco-ci
     name: Lint, tests and coverage
+    timeout-minutes: 60
     steps:
       - &checkout
         uses: actions/checkout@v7
@@ -34,19 +35,28 @@ jobs:
       - run: make lint cover
 
   integration:
-    if: github.event_name == 'pull_request' || github.event.pull_request.merged
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'pull_request_target' && github.event.pull_request.merged)
+    runs-on: r1cco-ci
     name: Integration stack
     timeout-minutes: 30
     steps:
       - *checkout
       - *setup-go
       - run: make integration
+      - name: Clean up integration Compose stack
+        if: always()
+        env:
+          POSTIE_SOURCE_PORT: "25432"
+          POSTIE_CONTROL_PORT: "25433"
+          POSTIE_KAFKA_PORT: "39092"
+          POSTIE_CONNECT_PORT: "28083"
+        run: docker compose -p postie-integration -f docker-compose.yml down --volumes --remove-orphans
 
   image:
-    if: github.event_name == 'pull_request' || github.event.pull_request.merged
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'pull_request_target' && github.event.pull_request.merged)
+    runs-on: r1cco-ci
     name: Image builds
+    timeout-minutes: 60
     steps:
       - *checkout
       - uses: docker/setup-buildx-action@v4
@@ -56,7 +66,8 @@ jobs:
   publish:
     needs: [checks, integration, image]
     if: github.event.pull_request.merged
-    runs-on: ubuntu-latest
+    runs-on: r1cco-ci
+    timeout-minutes: 60
     permissions: { contents: write, packages: write }
     env:
       SHA: ${{ github.event.pull_request.merge_commit_sha }}
